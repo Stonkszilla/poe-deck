@@ -1,0 +1,41 @@
+Item Class: One Hand Swords
+Rarity: Unique
+Rebuke of the Vaal
+Vaal Blade
+--------
+One Handed Sword
+Physical Damage: 106-211 (augmented)
+Elemental Damage: 67-122 (augmented), 53-124 (augmented), 1-226 (augmented)
+Chaos Damage: 98-120 (augmented)
+Critical Strike Chance: 5.00%
+Attacks per Second: 1.43 (augmented)
+Weapon Range: 1.1 metres
+--------
+Requirements:
+Level: 64
+Str: 113
+Dex: 113
+--------
+Sockets: W-W 
+--------
+Item Level: 84
+--------
+{ Implicit Modifier — Attack }
++460 to Accuracy Rating
+--------
+{ Unique Modifier — Damage, Physical, Attack }
+Adds 60(49-98) to 125(101-140) Physical Damage
+{ Unique Modifier — Damage, Elemental, Fire, Attack }
+Adds 67(49-98) to 122(101-140) Fire Damage
+{ Unique Modifier — Damage, Elemental, Cold, Attack }
+Adds 53(49-98) to 124(101-140) Cold Damage
+{ Unique Modifier — Damage, Elemental, Lightning, Attack }
+Adds 1 to 226(210-250) Lightning Damage
+{ Unique Modifier — Damage, Chaos, Attack }
+Adds 98(49-98) to 120(101-140) Chaos Damage
+{ Unique Modifier — Attack, Speed }
+10(10-20)% increased Attack Speed
+--------
+Though the Vaal revered peace, it would have 
+been suicide for any culture to rouse them to war.
+- Icius Perandus, Scholar to the Empire.

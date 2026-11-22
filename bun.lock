@@ -1,0 +1,41 @@
+{
+  "lockfileVersion": 1,
+  "configVersion": 1,
+  "workspaces": {
+    "": {
+      "name": "poe-deck",
+      "dependencies": {
+        "@sindresorhus/fnv1a": "^3.1.0",
+        "neverthrow": "^8.2.0",
+      },
+      "devDependencies": {
+        "@types/bun": "latest",
+        "pathofexile-dat": "16.0.1",
+        "typescript": "^5",
+      },
+    },
+  },
+  "packages": {
+    "@rollup/rollup-linux-x64-gnu": ["@rollup/rollup-linux-x64-gnu@4.63.1", "", { "os": "linux", "cpu": "x64" }, "sha512-gfI5T24WLLuFfSKw7Go/zDXjAAV0fny0swTaDv+WjK7vqcw4cRhFfdsyKL1n+ukI+ooBxn3bVQnyrn06WpI50w=="],
+
+    "@sindresorhus/fnv1a": ["@sindresorhus/fnv1a@3.1.0", "", {}, "sha512-KV321z5m/0nuAg83W1dPLy85HpHDk7Sdi4fJbwvacWsEhAh+rZUW4ZfGcXmUIvjZg4ss2bcwNlRhJ7GBEUG08w=="],
+
+    "@types/bun": ["@types/bun@1.4.2", "", { "dependencies": { "bun-types": "1.4.2" } }, "sha512-GimotNn7+ZV0uVArItBbriZsR1oNf0+WTzPkdcFrzShI7k2norL0uzEaJT8T33dWr7O/c9ZDuAFQrctKCi72oQ=="],
+
+    "@types/node": ["@types/node@26.5.0", "", { "dependencies": { "undici-types": "~8.9.0" } }, "sha512-dVSGpriSoCgz8WnDNTuSSuSv1PC/ALXihO4ulRZt7Md8k9mlbdin3lGOcDE8SnWOgf513ByWlXd7BK4azmyg/A=="],
+
+    "bun-types": ["bun-types@1.4.2", "", { "dependencies": { "@types/node": "*" } }, "sha512-bxV1FgK7yBIzjRe5zBozIM4Bem11ZJcCXSrjWRG3YWLt8yFDePu4cLjpebO8OvPeIE9trbyPF4fuj3Cia4Fj3w=="],
+
+    "neverthrow": ["neverthrow@8.2.0", "", { "optionalDependencies": { "@rollup/rollup-linux-x64-gnu": "^4.24.0" } }, "sha512-kOCT/1MCPAxY5iUV3wytNFUMUolzuwd/VF/1KCx7kf6CutrOsTie+84zTGTpgQycjvfLdBBdvBvFLqFD2c0wkQ=="],
+
+    "ooz-wasm": ["ooz-wasm@2.0.0", "", {}, "sha512-Ewk+Vga2m9niFGV5qT+4EKfBnFEQSQfnTdOWSlnQcpDB2OAdk7TpRHfKqxLSLhDKRjKjw9R+sGlOreWW8ABR0A=="],
+
+    "pathofexile-dat": ["pathofexile-dat@16.0.1", "", { "dependencies": { "ooz-wasm": "^2.0.0", "pathofexile-dat-schema": "^8.0.0" }, "bin": { "pathofexile-dat": "dist/cli/run.js" } }, "sha512-9se/1xrt0YAOsCwUZWjBRu5vIDmk3+JbZCVDvmJCXH+/mr/rJpSfj3YtK5brN/HipUH/vPwg3gDpmH/3QDD4Qw=="],
+
+    "pathofexile-dat-schema": ["pathofexile-dat-schema@8.0.0", "", {}, "sha512-sn/8cJHbDCM6HjLMk9LnWXXS5Nbl2YqzqZslbooC7ankKbnr0tBwfl8AxM5fI+IzX49zNnKGuqpFvQQ2UMFuig=="],
+
+    "typescript": ["typescript@5.9.3", "", { "bin": { "tsc": "bin/tsc", "tsserver": "bin/tsserver" } }, "sha512-jl1vZzPDinLr9eUt3J/t7V6FgNEw9QjvBPdysz9KfQDD41fQrC2Y4vKQdiaUpFT4bXlb1RHhLpp8wtm6M5TgSw=="],
+
+    "undici-types": ["undici-types@8.9.0", "", {}, "sha512-KTDyRTYX8sWmKXAikPHHSyc63CRPETMctyjKFupcC6OBLXT3xsN0e9aF7m+mIXutFWpUXuedtowG7iLOzp0kQg=="],
+  }
+}

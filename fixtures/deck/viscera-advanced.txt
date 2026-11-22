@@ -1,0 +1,11 @@
+Item Class: Viscera
+Lesser Defaced Bust
+--------
+Head
+--------
+Item Level: 26
+--------
+{ Implicit Modifier }
+14(10-15)% increased Stun and Block Recovery
+--------
+Take this to the Wickerman in a town or hideout to attach it.

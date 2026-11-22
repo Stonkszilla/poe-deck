@@ -1,0 +1,28 @@
+Item Class: Rings
+Rarity: Rare
+Woe Grip
+Synaptic Ring
+--------
+Requirements:
+Level: 32
+--------
+Item Level: 85
+--------
+{ Implicit Modifier — Elemental, Lightning, Resistance }
++2% to maximum Lightning Resistance
+(Maximum Resistances cannot be raised above 90%)
+Cannot roll Modifiers of Non-Lightning Damage Types — Unscalable Value
+(The Damage Types are Physical, Fire, Cold, Lightning, and Chaos)
+--------
+{ Prefix Modifier "Stalwart" (Tier: 5) — Life }
++44(40-54) to maximum Life
+{ Prefix Modifier "Aqua" (Tier: 8) — Mana }
++40(40-44) to maximum Mana
+{ Suffix Modifier "of the Crystal" (Tier: 5) — Elemental, Resistance }
++3(3-5)% to all Elemental Resistances
+{ Suffix Modifier "of the Starfish" (Tier: 4) — Life }
+Regenerate 20.8(16.1-24) Life per second
+{ Suffix Modifier "of the Thunderhead" (Tier: 5) — Elemental, Lightning, Resistance }
++29(24-29)% to Lightning Resistance
+--------
+Metallic thoughts whisper in the dark.

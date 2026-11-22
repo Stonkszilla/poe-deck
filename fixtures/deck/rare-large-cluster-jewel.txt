@@ -1,0 +1,29 @@
+Item Class: Jewels
+Rarity: Rare
+Maelström Vessel
+Large Cluster Jewel
+--------
+Intangibility: 32%
+--------
+Requirements:
+Level: 40
+--------
+Item Level: 51
+--------
+Adds 12 Passive Skills (enchant)
+(Added Passive Skills are never considered to be in Radius by other Jewels) (enchant)
+(All Added Passive Skills are Small unless otherwise specified) (enchant)
+2 Added Passive Skills are Jewel Sockets (enchant)
+Added Small Passive Skills grant: 12% increased Chaos Damage (enchant)
+(Passive Skills that are not Notable, Masteries, Keystones, or Jewel Sockets are Small) (enchant)
+--------
+{ Prefix Modifier "Notable" (Tier: 1) — Damage, Chaos }
+1 Added Passive Skill is Unwaveringly Evil — Unscalable Value
+{ Prefix Modifier "Notable" (Tier: 1) — Damage, Chaos }
+1 Added Passive Skill is Wicked Pall — Unscalable Value
+{ Suffix Modifier "of the Whelpling" (Tier: 3) — Elemental, Fire, Resistance }
+Added Small Passive Skills also grant: +2(2-3)% to Fire Resistance
+{ Suffix Modifier "of the Cloud" (Tier: 3) — Elemental, Lightning, Resistance }
+Added Small Passive Skills also grant: +3(2-3)% to Lightning Resistance
+--------
+Place into an allocated Large Jewel Socket on the Passive Skill Tree. Added passives do not interact with jewel radiuses.   to remove from the Socket.

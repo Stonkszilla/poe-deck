@@ -1,0 +1,17 @@
+{
+  "compilerOptions": {
+    "lib": ["ESNext"],
+    "target": "ESNext",
+    "module": "Preserve",
+    "moduleResolution": "bundler",
+    "types": ["bun-types"],
+    "strict": true,
+    "noUncheckedIndexedAccess": true,
+    "noEmit": true,
+    "skipLibCheck": true
+  },
+  // Пин донора собран под Vite и Vue; свой tsconfig у него уже есть.
+  // Проверяем свой код, чужой — нет.
+  "include": ["src", "tools"],
+  "exclude": ["vendor", "node_modules", "submodules"]
+}

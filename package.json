@@ -1,0 +1,19 @@
+{
+  "name": "poe-deck",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Path of Exile 1/2 helper for Steam Deck — gamepad and touchscreen first",
+  "scripts": {
+    "test": "bun test src"
+  },
+  "devDependencies": {
+    "@types/bun": "latest",
+    "pathofexile-dat": "16.0.1",
+    "typescript": "^5"
+  },
+  "dependencies": {
+    "@sindresorhus/fnv1a": "^3.1.0",
+    "neverthrow": "^8.2.0"
+  }
+}

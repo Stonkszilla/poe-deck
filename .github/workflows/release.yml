@@ -1,0 +1,122 @@
+# Release on a signed v* tag: build on a GitHub runner, attest provenance,
+# then publish once a reviewer approves the `release` environment.
+#
+# Every `uses:` is pinned to a full commit SHA. No pull_request_target, no
+# secrets beyond the per-job GITHUB_TOKEN, and each job gets only the
+# permissions it needs.
+name: release
+
+on:
+  push:
+    tags: ['v*']
+
+permissions: {}
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      id-token: write
+      attestations: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          submodules: true
+          persist-credentials: false
+
+      - name: Check tag
+        env:
+          TAG: ${{ github.ref_name }}
+        run: |
+          [[ "$TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.]+)?$ ]] \
+            || { echo "::error::tag $TAG is not vX.Y.Z or vX.Y.Z-suffix"; exit 1; }
+
+      # Same script as a local build: native binaries in debian:12-slim, the
+      # daemon compiled by bun into one file, a smoke test in a clean
+      # container, then the archive and its sha256.
+      - name: Build
+        env:
+          POE_DECK_VERSION: ${{ github.ref_name }}
+        run: bash ci/bundle/build.sh dist
+
+      # What's new is the tag message body: the subject is always "release vX.Y.Z".
+      # %(contents) would also carry the tag signature, so only the body is read.
+      # checkout fetches refs/tags/<tag> itself, so the annotated tag is here.
+      - name: Release notes
+        env:
+          TAG: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          [ "$(git cat-file -t "refs/tags/$TAG")" = tag ] \
+            || { echo "::error::$TAG is not an annotated tag"; exit 1; }
+          git for-each-ref --format='%(contents:body)' "refs/tags/$TAG" > dist/whats-new.md
+
+      - uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-path: dist/*.tar.gz
+
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: release
+          path: |
+            dist/*.tar.gz
+            dist/*.sha256
+            dist/whats-new.md
+          if-no-files-found: error
+          retention-days: 7
+
+  release:
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    # Required reviewer: nothing is published until the release is approved.
+    environment: release
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: release
+          path: dist
+
+      # Draft first, files attached, then publish: with immutable releases the
+      # assets are frozen at the moment the draft goes public.
+      - name: Publish release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.ref_name }}
+          REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          cd dist
+          sha256sum -c ./*.sha256
+          pre=()
+          [[ "$TAG" == *-* ]] && pre=(--prerelease)
+          news=$(cat whats-new.md)
+          rm whats-new.md
+          fence='```'
+          {
+            echo "To install, follow the [install steps](https://github.com/$REPO/blob/$TAG/docs/player/README.md#install) in the player guide."
+            if [ -n "$news" ]; then
+              echo
+              echo "## What's new"
+              echo
+              printf '%s\n' "$news"
+            fi
+            echo
+            echo "Verify the archive before installing:"
+            echo
+            echo "${fence}sh"
+            echo "sha256sum -c poe-deck-$TAG-steamos-x86_64.tar.gz.sha256"
+            echo "gh attestation verify poe-deck-$TAG-steamos-x86_64.tar.gz --repo $REPO"
+            echo "$fence"
+          } > ../notes.md
+          gh release create "$TAG" --repo "$REPO" --verify-tag --draft \
+            --title "$TAG" --notes-file ../notes.md "${pre[@]}" ./*.tar.gz ./*.sha256
+          gh release edit "$TAG" --repo "$REPO" --draft=false

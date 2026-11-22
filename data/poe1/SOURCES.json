@@ -1,0 +1,7 @@
+{
+  "pin": "2498730beecc1a46d39214ac437ffbe9f5f542d8",
+  "tradeAtPin": "trade API 2026-11-22",
+  "patch": "3.30.0.4",
+  "trade": "trade API 2026-11-22",
+  "generator": "tools/datagen/datagen.ts"
+}

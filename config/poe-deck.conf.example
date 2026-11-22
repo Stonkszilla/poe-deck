@@ -1,0 +1,40 @@
+# poe-deck player config
+#
+# Copy this file to ~/.config/poe-deck/poe-deck.conf and edit it in Desktop
+# Mode with any text editor. Lines starting with # are comments. An empty or
+# missing file means defaults. After a change, restart the daemon:
+#
+#   systemctl --user restart poe-deck
+#
+# Check the result any time with:   poe-deck doctor
+
+# Trade league. Empty = the current softcore trade league, picked on its own
+# every session. Set it for Standard, Hardcore or a private league. The name
+# must match the trade site exactly, e.g.:
+#
+#   league = Standard
+league =
+
+# Which listings the price comes from:
+#   securable     instant buyout (default)
+#   available     instant buyout or in person
+#   online        in person, seller online
+#   onlineleague  in person, seller online in the league
+#   any           any listing, including offline sellers
+price_mode =
+
+# How many seconds the price panel stays on screen (1 to 600, default 15).
+# While the cursor is on the panel, the timer waits.
+panel_ttl =
+
+# Private leagues need your session cookie. It is NOT read from this file:
+# set it as an environment variable for the daemon instead, for example with
+#
+#   systemctl --user edit poe-deck
+#
+# and the lines
+#
+#   [Service]
+#   Environment=POE_DECK_POESESSID=<your POESESSID>
+#
+# Public leagues never need it.
