@@ -1,25 +1,25 @@
-// Точка входа демона, собранного в один исполняемый файл.
+// Entry point of the daemon built as one executable file.
 //
 //   bun build --compile ci/bundle/entry.ts --root . \
 //     --asset-naming '[dir]/[name].[ext]' --outfile dist/poe-deck/poe-deck
 //
-// Рецепт целиком — ci/bundle/build-daemon.sh. Здесь — то, чего нет у исходников:
+// The full recipe is ci/bundle/build-daemon.sh. Here is what the source does not have:
 //
-//  1. Модули донора импортируются СТРОКОЙ. `src/donor.ts` грузит их шаблонным
-//     путём от каталога пина, а такой `import()` бандлер не видит, и в файл бы
-//     ничего не вшилось.
-//  2. Справочники донора вшиваются как файлы (`with { type: 'file' }`). С
-//     `--asset-naming '[dir]/[name].[ext]'` они лежат в `/$bunfs/root/` тем же
-//     деревом, что в репозитории, — поэтому `fetch` и `import()` донора по
-//     `BASE_URL` находят их без единой правки в коде донора.
-//  3. Справочники — не пин как есть, а пин с нашей дельтой: их и
-//     бинарные индексы к ним собирает в `data/poe1/.public/` build-daemon.sh
-//     до сборки, тем же `assembleDonorData`, что исходники при первом запуске.
-//     Игроку нечего строить и некуда писать: rootfs read-only, а в `$HOME`
-//     демон не кладёт ничего.
+//  1. Donor modules are imported by a LITERAL path. `src/donor.ts` loads them by a
+//     template path from the pin dir, and the bundler does not see such an
+//     `import()`, so nothing would be embedded in the file.
+//  2. Donor reference data is embedded as files (`with { type: 'file' }`). With
+//     `--asset-naming '[dir]/[name].[ext]'` it sits in `/$bunfs/root/` in the same
+//     tree as in the repository, so donor `fetch` and `import()` by
+//     `BASE_URL` find it with no change in the donor code.
+//  3. The reference data is not the pin as is, but the pin with our delta:
+//     build-daemon.sh builds it and its binary indexes into `data/poe1/.public/`
+//     before the build, with the same `assembleDonorData` that the source runs at first start.
+//     The player has nothing to build and nowhere to write: rootfs is read-only, and
+//     the daemon puts nothing into `$HOME`.
 //
-// Файл лежит вне `src/`, потому что tsc проекта не проверяет код донора
-// (tsconfig.json, exclude vendor), а статический импорт затащил бы его в проверку.
+// The file is outside `src/` because the project tsc does not check donor code
+// (tsconfig.json, exclude vendor), and a static import would pull it into the check.
 
 import * as data from '../../vendor/awakened-poe-trade/renderer/src/assets/data/index.ts'
 import * as parser from '../../vendor/awakened-poe-trade/renderer/src/parser/index.ts'
@@ -42,7 +42,7 @@ import { loadDonorParser, useBundledDonor } from '../../src/donor'
 import { formatPriceCheck, priceOf } from '../../src/price-check'
 import { formatItem } from '../../src/slice'
 
-/** Сборка: коммит poe-deck и пин донора. Подставляет `--define` в build-daemon.sh. */
+/** Build: poe-deck commit and donor pin. `--define` in build-daemon.sh sets it. */
 declare const POE_DECK_BUILD: string
 
 useBundledDonor({
@@ -60,12 +60,12 @@ if (argv[0] === '--version') {
   process.exit(0)
 }
 
-// Самопроверка игрока: звено за звеном, ✓ или ✗ с советом.
+// Self-check for the player: link by link, ✓ or ✗ with a hint.
 if (argv[0] === 'doctor') process.exit(await doctor(POE_DECK_BUILD))
 
-// Проверка набора без Deck и без сессии: парсер из вшитого пина разбирает
-// текст предмета из файла. Ей CI проверяет собранный файл в чистом контейнере —
-// без bun, без git и без сети.
+// Bundle check without a Deck and without a session: the parser from the embedded pin
+// parses item text from a file. CI uses it to check the built file in a clean container,
+// with no bun, no git and no network.
 if (argv[0] === '--check-parser') {
   const file = argv[1]
   if (!file) {
@@ -82,11 +82,11 @@ if (argv[0] === '--check-parser') {
   process.exit(0)
 }
 
-// Цена из набора без сессии и без жеста: тот же путь priceOf, что у демона
-// после нажатия, только текст предмета берётся из файла. Ей набор проверяется
-// на Deck до мержа (ci/bundle/deck-verify.sh): цена обеих форм предмета на
-// стоковом rootfs, без bun и без контейнера. Коды: 0 — ответ рынка получен,
-// 1 — парсер отказал, 2 — нет аргумента, 4 — трейд не ответил.
+// Price from the bundle without a session and without a gesture: the same priceOf path
+// as the daemon after a press, only the item text comes from a file. It checks the bundle
+// on the Deck before merge (ci/bundle/deck-verify.sh): price of both item forms on
+// the stock rootfs, with no bun and no container. Codes: 0 = market answer received,
+// 1 = parser rejected, 2 = no argument, 4 = trade did not answer.
 if (argv[0] === '--check-price') {
   const file = argv[1]
   if (!file) {
@@ -102,7 +102,7 @@ if (argv[0] === '--check-price') {
   const item = result.value
   for (const line of formatItem(item)) console.log(line)
   try {
-    // Лига — как у демона: переменная, иначе конфиг игрока, иначе /api/leagues.
+    // League as in the daemon: the variable, else the player config, else /api/leagues.
     const league = effectiveSettings(loadConfig().settings).settings.league
     const check = await priceOf(item, league ? { league } : {})
     console.log(`price: ${formatPriceCheck(item, check)}`)

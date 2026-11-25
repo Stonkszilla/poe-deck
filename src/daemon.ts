@@ -1,85 +1,85 @@
-// Демон poe-deck: живёт всю игровую сессию, слушает хоткей, показывает цену.
+// The poe-deck daemon: lives for the whole game session, listens for the hotkey, shows the price.
 //
-// Цепочка целиком — от кнопки до панели поверх игры:
+// The whole chain, from the button to the panel over the game:
 //
 //   button_back_left (Ctrl+Alt+C)
-//     ├─→ игра кладёт advanced item description в CLIPBOARD
-//     └─→ хоткей gamescope слышит тот же аккорд
-//          → читаем CLIPBOARD с сессионного :0        (slice.ts)
-//          → парсер из пина донора                    (donor.ts)
-//          → запрос цены: моды / имя и база           (price-check.ts)
-//          → панель поверх игры                       (panel.ts → src/render)
+//     ├─→ the game puts the advanced item description into CLIPBOARD
+//     └─→ the gamescope hotkey hears the same chord
+//          → read CLIPBOARD from the session :0       (slice.ts)
+//          → parser from the donor pin                (donor.ts)
+//          → price request: mods / name and base      (price-check.ts)
+//          → panel over the game                      (panel.ts → src/render)
 //
-//   левый тачпад (mouse behaviour) → курсор на сервере ИГРЫ
-//     └─→ gs-pointer читает его опросом              (src/render/gs-pointer.c)
-//          → курсор на панели разворачивает редактор (overlay.ts)
-//          → L4 (Ctrl+Shift) переключает и подтверждает
+//   left touchpad (mouse behaviour) → cursor on the GAME server
+//     └─→ gs-pointer reads it by polling             (src/render/gs-pointer.c)
+//          → the cursor on the panel opens the editor (overlay.ts)
+//          → L4 (Ctrl+Shift) toggles and confirms
 //
-// Отличие от `src/slice.ts` — не в функциях, а в жизненном цикле: срез
-// доказывал цепочку за 90 секунд и на этом заканчивался, демон переживает вход
-// в игру, выход в интерфейс Steam и возврат. Всё, что срез уже доказал на
-// железе (чтение буфера, подъём парсера, разбор строк зонда), берётся у него
-// импортом, а не переписывается.
+// The difference from `src/slice.ts` is not in the functions but in the life cycle: the slice
+// proved the chain in 90 seconds and ended there; the daemon survives entering
+// the game, leaving to the Steam interface and coming back. Everything the slice already proved on
+// hardware (clipboard read, parser start, parsing probe lines) comes from it
+// by import and is not rewritten.
 //
-// Два требования сюда пришли обязательными, а не желательными, и оба — следствие
-// замеров, а не предпочтений:
+// Two requirements came here as mandatory, not as nice-to-have, and both follow from
+// measurements, not from preference:
 //
-//  1. МИТИГАЦИЯ ПРИВАТНОГО ПРОТОКОЛА (ADR 0002, § Цена). `gamescope_action_binding`
-//     помечен «Regular Wayland clients must not use it», Valve не обязана его
-//     сохранять, и расхождение реализации с собственным XML УЖЕ наблюдалось на
-//     железе. Отсюда: проверка глобала и версии ДО работы, распознавание порядка
-//     аргументов `triggered` на лету, и деградация внятным сообщением вместо
-//     стектрейса, если протокола нет.
+//  1. PRIVATE PROTOCOL MITIGATION (ADR 0002, § Price). `gamescope_action_binding`
+//     is marked "Regular Wayland clients must not use it", Valve does not have to
+//     keep it, and a mismatch between the implementation and its own XML WAS ALREADY seen on
+//     hardware. Hence: check the global and its version BEFORE work, detect the order of
+//     the `triggered` arguments on the fly, and degrade with a clear message instead of
+//     a stack trace if the protocol is missing.
 //
-//  2. АВТОГАШЕНИЕ ПО `GAMESCOPE_FOCUSED_APP` (спайк по оверлею, эксп. 6). Демон
-//     не связан с жизненным циклом игры и с ней не исчезает — значит обязан
-//     гаснуть сам, иначе повиснет поверх интерфейса Steam.
+//  2. AUTO-HIDE BY `GAMESCOPE_FOCUSED_APP` (overlay spike, exp. 6). The daemon
+//     is not tied to the life cycle of the game and does not go away with it, so it must
+//     hide itself, otherwise it hangs over the Steam interface.
 //
-// Порядок аргументов `triggered` распознаёт САМ ЗОНД, на C, и это не лень:
-// рецепт (собрать обе раскладки слов и взять ту, чья метка правдоподобна
-// относительно CLOCK_MONOTONIC) написан и проверен на живом Deck — там он и
-// живёт. Демон читает его вердикт строкой из stdout. Своих выводов из времени
-// и флагов события он не делает вовсе, поэтому расхождение версий на него
-// не влияет — но вердикт печатается, потому что следующему, кто захочет
-// опереться на `trigger_flags`, знать его придётся.
+// The order of the `triggered` arguments is detected BY THE PROBE ITSELF, in C, and this is not laziness:
+// the recipe (build both word layouts and take the one whose timestamp is plausible
+// against CLOCK_MONOTONIC) is written and checked on a live Deck, and it
+// lives there. The daemon reads its verdict as a line from stdout. It draws no conclusions
+// of its own from the event time and flags, so a version mismatch does not
+// affect it. The verdict is still printed, because the next person who wants
+// to rely on `trigger_flags` will need to know it.
 //
-// Запуск на Deck — юнит `systemd --user`, ставится `install.sh` из архива релиза;
-// рецепт целиком: docs/ops/deck-daemon.md. Руками из SSH работает так же:
+// On the Deck it runs as a `systemd --user` unit, installed by `install.sh` from the release archive;
+// the full recipe: docs/ops/deck-daemon.md. By hand from SSH it works the same:
 //
 //   bun src/daemon.ts
 //
-// Переменные окружения:
-//   POE_DECK_PROBE     путь к gs-hotkey-probe. Умолчание у всех C-бинарей одно:
-//                      рядом с собранным демоном, у исходников ~/poe-deck-tools
+// Environment variables:
+//   POE_DECK_PROBE     path to gs-hotkey-probe. All C binaries share one default:
+//                      next to the built daemon, for sources ~/poe-deck-tools
 //                      (src/runtime.ts)
-//   POE_DECK_PANEL     путь к gs-panel.
-//                      Рендерера нет — цена уходит только в журнал, демон живёт
-// Лига, рынок и TTL панели игрок задаёт файлом ~/.config/poe-deck/poe-deck.conf
-// (src/config.ts); переменные ниже главнее файла — ими живут прогоны.
+//   POE_DECK_PANEL     path to gs-panel.
+//                      No renderer: the price goes only to the log, the daemon lives on
+// The player sets the league, market and panel TTL in ~/.config/poe-deck/poe-deck.conf
+// (src/config.ts); the variables below override the file, test runs use them.
 //
-//   POE_DECK_PANEL_TTL сколько секунд держать панель на экране (15). Пока курсор
-//                      на панели, срок не идёт: гасить то, что человек правит, нельзя
-//   POE_DECK_POINTER   путь к gs-pointer.
-//                      Нет — прайс-чек работает как раньше, редактор не открывается
-//   POE_DECK_ACT_KEYS  запасной аккорд действия редактора (по умолчанию выключен)
-//   POE_DECK_TOGGLE_KEYS аккорд «убрать панель / вернуть результат» (Control_L+Shift_L — L4)
-//   POE_DECK_LEAVE_MS  через сколько свернуть редактор, когда курсор ушёл (1200)
-//   POE_DECK_PX_PER_STEP пикселей движения пальца на шаг значения в правке (14)
-//   POE_DECK_PRICE_MODE рынок цены: securable (умолчание) | available | online | onlineleague | any
-//   POE_DECK_KEYS      аккорд хоткея (умолчание Control_L+Alt_L+C — Steam Input
-//                      шлёт ЛЕВЫЙ Control, сравнение наборов точное)
-//   POE_DECK_GAME      poe1 | poe2, умолчание poe1
-//   POE_DECK_WINDOW    на сколько секунд вооружается зонд за один запуск (3600)
-//   POE_DECK_CLIP      путь к gs-clip, читалке буфера
-//   POE_DECK_TOOLBOX   distrobox с xclip — запасной путь без gs-clip (gs-probe, slice.ts)
-//   POE_DECK_LEAGUE    перебить лигу (иначе конфиг, иначе /api/leagues один раз)
-//   POE_DECK_POESESSID cookie сессии — только для приватных лиг (docs/recon/poesessid.md)
-//   POE_DECK_DUMP      каталог для сырых буферов — фикстуры снимаются только так
-//   POE_DECK_QUERY_DUMP каталог для тел уходящих запросов (приёмка: экран vs запрос)
-//   POE_DECK_SHOT_HINT файл-подсказка джобу «панель на экране, снимай» (ci/)
-//   XDG_STATE_HOME     где метка «кадр ready уже показан» (~/.local/state/poe-deck)
+//   POE_DECK_PANEL_TTL how many seconds to keep the panel on screen (15). While the cursor
+//                      is on the panel, the timer stops: do not hide what a person is editing
+//   POE_DECK_POINTER   path to gs-pointer.
+//                      None: the price check works as before, the editor does not open
+//   POE_DECK_ACT_KEYS  fallback chord for the editor action (off by default)
+//   POE_DECK_TOGGLE_KEYS chord "hide the panel / bring the result back" (Control_L+Shift_L, L4)
+//   POE_DECK_LEAVE_MS  how long until the editor collapses after the cursor left (1200)
+//   POE_DECK_PX_PER_STEP pixels of finger movement per value step while editing (14)
+//   POE_DECK_PRICE_MODE price market: securable (default) | available | online | onlineleague | any
+//   POE_DECK_KEYS      hotkey chord (default Control_L+Alt_L+C: Steam Input
+//                      sends the LEFT Control, the set comparison is exact)
+//   POE_DECK_GAME      poe1 | poe2, default poe1
+//   POE_DECK_WINDOW    how many seconds the probe stays armed per run (3600)
+//   POE_DECK_CLIP      path to gs-clip, the clipboard reader
+//   POE_DECK_TOOLBOX   distrobox with xclip, the fallback path without gs-clip (gs-probe, slice.ts)
+//   POE_DECK_LEAGUE    override the league (otherwise the config, otherwise /api/leagues once)
+//   POE_DECK_POESESSID session cookie, only for private leagues (docs/recon/poesessid.md)
+//   POE_DECK_DUMP      directory for raw buffers; fixtures are captured only this way
+//   POE_DECK_QUERY_DUMP directory for bodies of outgoing requests (acceptance: screen vs request)
+//   POE_DECK_SHOT_HINT hint file for the job "panel is on screen, take the shot" (ci/)
+//   XDG_STATE_HOME     where the marker "ready frame already shown" lives (~/.local/state/poe-deck)
 //   DISPLAY, GAMESCOPE_WAYLAND_DISPLAY, XDG_RUNTIME_DIR
-//                      если не заданы — берутся из /run/user/<uid>/gamescope-environment
+//                      if not set, they come from /run/user/<uid>/gamescope-environment
 
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { dirname } from 'node:path'
@@ -118,16 +118,16 @@ import {
   type SearchMode
 } from './trade/query'
 
-/** Код выхода деградации: протокола нет, но это не поломка демона. */
+/** Degradation exit code: the protocol is missing, but the daemon is not broken. */
 export const EXIT_NO_PROTOCOL = 3
 
-// ── окружение сессии ─────────────────────────────────────────────────────────
+// ── session environment ──────────────────────────────────────────────────────
 
 /**
- * Разбор `/run/user/<uid>/gamescope-environment`. Файл нужен потому, что юнит
- * `systemd --user` поднимается раньше Game Mode и переменных сессии не видит, а
- * из `/proc/<pid>/environ` самого gamescope их не прочитать: у бинаря стоит
- * файловая capability, процесс non-dumpable (грабля из docs/ops).
+ * Parse `/run/user/<uid>/gamescope-environment`. The file is needed because the
+ * `systemd --user` unit starts before Game Mode and does not see the session variables, and
+ * they cannot be read from `/proc/<pid>/environ` of gamescope itself: the binary has a
+ * file capability, the process is non-dumpable (a pitfall from docs/ops).
  */
 export function parseSessionEnv (text: string): Record<string, string> {
   const wanted = ['DISPLAY', 'WAYLAND_DISPLAY', 'GAMESCOPE_WAYLAND_DISPLAY', 'XDG_RUNTIME_DIR']
@@ -141,7 +141,7 @@ export function parseSessionEnv (text: string): Record<string, string> {
   return out
 }
 
-/** Заполняет недостающие переменные сессии из файла gamescope. Не перетирает заданные. */
+/** Fills in missing session variables from the gamescope file. Does not overwrite the set ones. */
 export function adoptSessionEnv (): string | null {
   const path = `/run/user/${process.getuid?.() ?? 1000}/gamescope-environment`
   if (!existsSync(path)) return null
@@ -152,34 +152,34 @@ export function adoptSessionEnv (): string | null {
   return path
 }
 
-// ── митигация приватного протокола ───────────────────────────────────────────
+// ── private protocol mitigation ──────────────────────────────────────────────
 
 export type DumpVerdict =
   | { kind: 'ok', version: number }
   | { kind: 'no-probe' | 'no-socket' | 'no-manager' | 'unclear', message: string, hint: string }
 
 /**
- * Разбор `gs-hotkey-probe --dump`: есть ли глобал и какой он версии.
+ * Parse `gs-hotkey-probe --dump`: is the global there, and which version is it.
  *
- * Зонд различает исходы сам и печатает их по-русски — здесь только классификация
- * его вывода, чтобы демон мог сказать «протокола нет» отдельно от «это вообще не
- * сессия gamescope». Разные причины — разные действия у того, кто читает лог.
+ * The probe tells the outcomes apart itself and prints them as text; here we only classify
+ * its output, so that the daemon can say "no protocol" separately from "this is not a
+ * gamescope session at all". Different causes mean different actions for the log reader.
  */
 export function parseDumpVerdict (stdout: string, code: number): DumpVerdict {
-  const version = stdout.match(/gamescope_action_binding_manager есть, версия (\d+)/)
+  const version = stdout.match(/gamescope_action_binding_manager present, version (\d+)/)
   if (code === 0 && version) return { kind: 'ok', version: Number(version[1]) }
 
-  // Паттерны ниже сверяются с выводом C-зонда (docs/spikes/gamescope-hotkey),
-  // и он пока говорит по-русски: строки переводятся вместе с ним, одним
-  // коммитом, иначе демон перестанет узнавать собственный зонд.
-  if (stdout.includes('не подключился к сокету')) {
+  // The patterns below match the output of the C probe (docs/spikes/gamescope-hotkey):
+  // change these strings together with it, in one commit,
+  // otherwise the daemon stops recognizing its own probe.
+  if (stdout.includes('could not connect to socket')) {
     return {
       kind: 'no-socket',
       message: 'no gamescope socket — this is not a Game Mode session',
       hint: 'the daemon targets Game Mode; there is nothing to do in Desktop Mode. Socket name lives in /run/user/<uid>/gamescope-environment'
     }
   }
-  if (stdout.includes('в реестре НЕТ')) {
+  if (stdout.includes('NOT in the registry')) {
     return {
       kind: 'no-manager',
       message: 'gamescope is here, gamescope_action_binding_manager is not in the registry',
@@ -194,23 +194,23 @@ export function parseDumpVerdict (stdout: string, code: number): DumpVerdict {
 }
 
 /**
- * Вердикт зонда о порядке аргументов `triggered`. Значение — не косметика:
- * на gamescope ≤3.16.24 (а на Deck стоит 3.16.23.4) флаги и время переставлены
- * относительно XML того же тега, и `trigger_flags` без этой проверки читать
- * нельзя. Демон ни временем, ни флагами не пользуется — но молчать об этом
- * значило бы оставить грабли следующему.
+ * The probe verdict on the order of the `triggered` arguments. The value is not cosmetic:
+ * on gamescope ≤3.16.24 (and the Deck runs 3.16.23.4) the flags and the time are swapped
+ * against the XML of the same tag, and `trigger_flags` cannot be read without this check.
+ * The daemon uses neither the time nor the flags, but to keep silent about it
+ * would leave a pitfall for the next person.
  */
 export function argOrderFromLine (line: string): 'xml' | 'swapped' | 'unknown' | null {
-  if (!line.includes('порядок аргументов triggered')) return null
-  if (line.includes('НЕ РАСПОЗНАН')) return 'unknown'
+  if (!line.includes('triggered argument order')) return null
+  if (line.includes('NOT RECOGNIZED')) return 'unknown'
   return line.includes('≤3.16.24') ? 'swapped' : 'xml'
 }
 
 /**
- * Жалоба зонда против его же рутины. Зонд печатает тик «жив» каждые несколько
- * секунд — за сессию это тысячи строк, и пересказывать их в журнал незачем. А вот
- * `✗`/`⚠` пересказать обязательно: там живёт «менеджер хоткеев исчез из реестра»,
- * то есть протокол отобрали прямо во время работы.
+ * A probe complaint as opposed to its routine output. The probe prints an "alive" tick every few
+ * seconds; per session that is thousands of lines, and there is no reason to copy them to the log. But
+ * `✗`/`⚠` must be copied: that is where "the hotkey manager left the registry" lives,
+ * that is, the protocol was taken away while running.
  */
 export function isProbeComplaint (line: string): boolean {
   const trimmed = line.trim()
@@ -218,11 +218,11 @@ export function isProbeComplaint (line: string): boolean {
 }
 
 /**
- * Есть ли протокол и какой версии — `gs-hotkey-probe --dump`. Одна проверка на
- * демон и `poe-deck doctor`: две реализации одного вопроса однажды
- * ответили бы по-разному. Срок — только у doctor: зонд, повисший на сокете, не
- * вешает его. Демон срока не ставит: на старте Game Mode gamescope бывает медленным,
- * и ждать его — правильно.
+ * Is the protocol there, and which version: `gs-hotkey-probe --dump`. One check for
+ * the daemon and `poe-deck doctor`: two implementations of one question would one day
+ * answer differently. Only doctor sets a timeout: a probe stuck on the socket does not
+ * hang it. The daemon sets no timeout: at Game Mode start gamescope can be slow,
+ * and waiting for it is correct.
  */
 export async function probeProtocol (probePath: string, timeoutMs?: number): Promise<DumpVerdict> {
   if (!existsSync(probePath)) {
@@ -241,25 +241,25 @@ export async function probeProtocol (probePath: string, timeoutMs?: number): Pro
     }
     return parseDumpVerdict(out, code)
   } catch (err) {
-    // Файл есть, но не запускается (права, чужая архитектура): это поломка
-    // набора, а не отсутствие протокола, — и словами, а не стектрейсом.
+    // The file exists but does not start (permissions, wrong architecture): the tool set
+    // is broken, the protocol is not missing. Say it in words, not with a stack trace.
     return { kind: 'unclear', message: `probe did not start: ${(err as Error).message}`, hint: HOW_TO_GET_TOOLS }
   }
 }
 
-// ── первый запуск ────────────────────────────────────────────────────────────
+// ── first start ──────────────────────────────────────────────────────────────
 
 /**
- * Метка «кадр ready уже показан». В `$XDG_STATE_HOME`, а не рядом с
- * конфигом: это состояние демона, а не настройка игрока, и удалить его можно,
- * не потеряв лигу. Снесли метку — кадр покажется снова, это и есть способ
- * повторить первый запуск.
+ * The marker "ready frame already shown". It lives in `$XDG_STATE_HOME`, not next to the
+ * config: it is daemon state, not a player setting, and it can be deleted
+ * without losing the league. Delete the marker and the frame shows again; this is the way
+ * to repeat the first start.
  */
 export function readyMarkerPath (env = process.env): string {
   return `${env.XDG_STATE_HOME || `${env.HOME}/.local/state`}/poe-deck/ready-shown`
 }
 
-/** Ставит метку. Не вышло (нет прав, полный диск) — кадр покажется ещё раз, и только. */
+/** Writes the marker. If that fails (no permissions, full disk), the frame shows once more, nothing else. */
 function markReadyShown (path: string): string | null {
   try {
     mkdirSync(dirname(path), { recursive: true })
@@ -270,11 +270,11 @@ function markReadyShown (path: string): string | null {
   }
 }
 
-// ── автогашение ──────────────────────────────────────────────────────────────
+// ── auto-hide ────────────────────────────────────────────────────────────────
 
 /**
- * AppId из `xprop -root GAMESCOPE_FOCUSED_APP`. `null` — игры на экране нет:
- * атом либо пуст (интерфейс Steam), либо отсутствует вовсе.
+ * AppId from `xprop -root GAMESCOPE_FOCUSED_APP`. `null` means no game on screen:
+ * the atom is either empty (Steam interface) or missing entirely.
  */
 export function parseFocusedApp (xpropOut: string): number | null {
   const match = xpropOut.match(/=\s*(\d+)/)
@@ -282,10 +282,10 @@ export function parseFocusedApp (xpropOut: string): number | null {
 }
 
 async function focusedApp (display: string): Promise<number | null> {
-  // try/catch не про отсутствие xprop — его ловит префлайт ниже, — а про то,
-  // что этот вызов живёт в setInterval: там любой отказ спавна улетел бы
-  // необработанным отказом промиса и убил бы весь демон. Молча вернуть «игры
-  // нет» хуже, чем упасть, только если об этом не сказать, — поэтому говорим.
+  // The try/catch is not about a missing xprop (the preflight below catches that). It is
+  // because this call lives in setInterval: there any spawn failure would become an
+  // unhandled promise rejection and kill the whole daemon. Silently returning "no game"
+  // is worse than a crash only if nobody says so, so we say it.
   try {
     const proc = Bun.spawn(['timeout', '5', 'xprop', '-root', 'GAMESCOPE_FOCUSED_APP'], {
       env: { ...process.env, DISPLAY: display },
@@ -301,10 +301,10 @@ async function focusedApp (display: string): Promise<number | null> {
 }
 
 /**
- * `DISPLAY` сервера ИГРЫ. Курсор от левого тачпада живёт там, а не на сессионном
- * `:0`, где рисуется панель (ADR 0002, Ф11 и Ф13) — рисуем у себя, координаты
- * берём оттуда. Переменной сессии для этого нет: сервер игры виден только в
- * окружении её собственного процесса.
+ * `DISPLAY` of the GAME server. The left touchpad cursor lives there, not on the session
+ * `:0` where the panel is drawn (ADR 0002, F11 and F13): we draw on our side and take the
+ * coordinates from there. There is no session variable for this: the game server is visible only in
+ * the environment of its own process.
  */
 export function gameDisplayFrom (environ: string): string | null {
   for (const entry of environ.split('\0')) {
@@ -314,15 +314,15 @@ export function gameDisplayFrom (environ: string): string | null {
 }
 
 /**
- * Что делать с читалкой курсора, когда известно, на каком сервере она читает
- * (`running`) и где сейчас игра (`found`).
+ * What to do with the cursor reader, given which server it reads from
+ * (`running`) and where the game is now (`found`).
  *
- * Демон стартует со входом в сессию, обычно раньше игры, а игра может
- * перезапуститься на другом сервере. Поэтому сервер ищется не один раз при
- * старте, а снова, пока игра на экране: иначе после перезагрузки Deck
- * редактор не открывался бы до перезапуска демона. Пропавшая игра читалку не
- * гасит — сервер мог лишь не попасться `pgrep`; умершую читалку демон
- * забывает сам, и следующий проход запускает её заново.
+ * The daemon starts with the session login, usually before the game, and the game can
+ * restart on another server. So the server is not looked up once at
+ * start but again while the game is on screen: otherwise after a Deck reboot
+ * the editor would not open until the daemon restarts. A missing game does not stop
+ * the reader, because `pgrep` may only have missed the server; the daemon forgets a dead
+ * reader itself, and the next pass starts it again.
  */
 export type PointerAction = 'wait' | 'keep' | 'start' | 'restart'
 export function pointerAction (running: string | null, found: string | null): PointerAction {
@@ -343,13 +343,13 @@ async function gameDisplay (appId: number | string): Promise<string | null> {
 }
 
 /**
- * Внешние команды, без которых демон работать не может. Проверяются ДО работы
- * одним списком: `Bun.spawn` на отсутствующий бинарь бросает, и без этой
- * проверки пропавший `xprop` роняет демон стектрейсом — ровно тем, что ADR 0002
- * запрещает (найдено прогоном на mini, где `timeout` из coreutils нет вовсе).
+ * External commands the daemon cannot work without. They are checked BEFORE work
+ * as one list: `Bun.spawn` throws on a missing binary, and without this
+ * check a missing `xprop` crashes the daemon with a stack trace, exactly what ADR 0002
+ * forbids (found by a run on mini, which has no `timeout` from coreutils at all).
  *
- * Буфер читается своим `gs-clip`; `xclip` на хосте или в distrobox —
- * запасной путь разработчика, поэтому достаточно любого из трёх.
+ * The clipboard is read by our own `gs-clip`; `xclip` on the host or in distrobox is
+ * the developer fallback, so any one of the three is enough.
  */
 export function missingTools (has: (cmd: string) => boolean, clipHelper = false): string[] {
   const missing = ['timeout', 'xprop'].filter(cmd => !has(cmd))
@@ -358,20 +358,20 @@ export function missingTools (has: (cmd: string) => boolean, clipHelper = false)
 }
 
 /**
- * Нажатие L5 по буферу, который не сменился, — повтор уже проверенного
- * предмета, если цена получена ровно по этому тексту и результат ещё держится.
- * Иначе это прежний отказ «игра не скопировала»: показать цену чужой вещи
- * хуже, чем честно отказать (#147).
+ * An L5 press on a clipboard that did not change is a repeat of an already checked
+ * item, if the price came from exactly this text and the result is still held.
+ * Otherwise it is the old refusal "the game did not copy": showing the price of a different item
+ * is worse than an honest refusal (#147).
  */
 export function isRepeatOfPriced (text: string, pricedBuffer: string | undefined, last: unknown): boolean {
   return Boolean(text) && text === pricedBuffer && Boolean(last)
 }
 
-// ── демон ────────────────────────────────────────────────────────────────────
+// ── daemon ───────────────────────────────────────────────────────────────────
 
 /**
- * Откуда берутся C-бинари — подсказка к любой их нехватке. У собранного демона
- * они едут в том же наборе, у исходников собираются на Deck.
+ * Where the C binaries come from: the hint for any missing one. With the built daemon
+ * they ship in the same set; with sources they are built on the Deck.
  */
 export const HOW_TO_GET_TOOLS = COMPILED
   ? 'it ships next to the poe-deck executable — the install is incomplete, run install.sh from the release archive again'
@@ -380,17 +380,17 @@ export const HOW_TO_GET_TOOLS = COMPILED
 const now = () => new Date().toTimeString().slice(0, 8)
 const log = (line: string) => { console.log(`${now()}  ${line}`) }
 
-// ── панель ───────────────────────────────────────────────────────────────────
+// ── panel ────────────────────────────────────────────────────────────────────
 
 /**
- * Слой показа: один долгоживущий `gs-panel` на всю сессию, кадры уезжают ему в
- * stdin. Процесс на каждый предмет не поднимаем — окно X11 и открытие шрифта
- * стоят дороже самого кадра (0.43 мс, ADR 0003 Ф3), а гасится панель пустым
- * кадром, не смертью процесса.
+ * The display layer: one long-lived `gs-panel` for the whole session, frames go to its
+ * stdin. We do not start a process per item: the X11 window and opening the font
+ * cost more than the frame itself (0.43 ms, ADR 0003 F3), and the panel is cleared with an empty
+ * frame, not by killing the process.
  *
- * **Отсутствие рендерера демон не роняет.** Прайс-чек при этом остаётся —
- * цена уходит в журнал. Это то же правило, что и с приватным протоколом: молчать
- * нельзя, падать не за что.
+ * **A missing renderer does not crash the daemon.** The price check stays:
+ * the price goes to the log. It is the same rule as with the private protocol: do not keep
+ * silent, and there is no reason to crash.
  */
 interface Panel {
   show: (lines: string[]) => void
@@ -406,8 +406,8 @@ function openPanel (path: string): Panel {
     return { show: () => {}, clear: () => {}, close: () => {}, live: false }
   }
 
-  // --seconds 0: живёт, пока его не убьют. --hz не задаём вовсе — перерисовка
-  // идёт по событию (ADR 0003, Решение 3), а частота там измерительный режим.
+  // --seconds 0: it lives until killed. We do not set --hz at all: redraws
+  // happen on events (ADR 0003, Decision 3), and the rate there is a measurement mode.
   const proc = Bun.spawn([path, '--seconds', '0'], {
     env: process.env,
     stdin: 'pipe',
@@ -419,8 +419,8 @@ function openPanel (path: string): Panel {
   let closing = false
   void proc.exited.then(code => {
     alive = false
-    // Про свою же собственную остановку не жалуемся: `close()` его и убил.
-    // Иначе каждый штатный выход демона выглядел бы в журнале как поломка.
+    // Do not complain about our own stop: `close()` killed it.
+    // Otherwise every normal daemon exit would look like a failure in the log.
     if (!closing) log(`⚠  renderer exited with ${code} — no panel any more, price stays in the log`)
   })
 
@@ -433,16 +433,16 @@ function openPanel (path: string): Panel {
   return {
     show: write,
     clear: () => write(clearFrame()),
-    // Гасить кадром перед смертью незачем: окно уходит вместе с процессом.
+    // No need to clear with a frame before exit: the window goes away with the process.
     close: () => { closing = true; alive = false; proc.kill() },
     get live () { return alive }
   }
 }
 
 /**
- * Подсказка джобу: панель с ценой на экране, момент для скриншота. Файл, а не
- * свой вызов `xprop`, — снимок уже умеет делать shell джоба (`screenshot()` в
- * ci/Jenkinsfile.deck), и второй реализации того же ему не нужно.
+ * A hint for the job: the price panel is on screen, time for a screenshot. A file, not
+ * our own `xprop` call: the job shell already takes the shot (`screenshot()` in
+ * ci/Jenkinsfile.deck), and it does not need a second implementation of the same.
  */
 async function hintScreenshot (label: string): Promise<void> {
   const path = process.env.POE_DECK_SHOT_HINT
@@ -456,33 +456,33 @@ export async function main (): Promise<number> {
   const probePath = toolPath('gs-hotkey-probe', process.env.POE_DECK_PROBE)
   const panelPath = toolPath('gs-panel', process.env.POE_DECK_PANEL)
   const keys = process.env.POE_DECK_KEYS ?? 'Control_L+Alt_L+C'
-  // Действие редактора — клик тачпада (Ф15): он приезжает маской в тех же
-  // строках, что координаты. Аккорд остаётся запасным путём на случай, если
-  // клик в раскладке снимут; L4 оказался неудобен на живом прогоне #98.
-  // Действие редактора — клик тачпада (Ф15). Аккорд остаётся запасным путём и
-  // по умолчанию выключен: L4 на живом прогоне #98 оказался неудобен, а сама
-  // кнопка нужнее под второй жест (см. `toggleKeys`).
+  // The editor action is a touchpad click (F15): it arrives as a mask in the same
+  // lines as the coordinates. The chord stays a fallback in case
+  // the click is removed from the layout; L4 turned out awkward on live run #98.
+  // The editor action is a touchpad click (F15). The chord stays a fallback and
+  // is off by default: L4 turned out awkward on live run #98, and the button itself
+  // is needed more for the second gesture (see `toggleKeys`).
   const actKeys = process.env.POE_DECK_ACT_KEYS ?? ''
-  // Второй жест эпика: убрать панель / вернуть последний результат без запроса
-  // к трейду. Живёт на L4 — единственной свободной задней кнопке.
+  // The second gesture of the epic: hide the panel / bring back the last result with no
+  // trade request. It lives on L4, the only free back button.
   const toggleKeys = process.env.POE_DECK_TOGGLE_KEYS ?? 'Control_L+Shift_L'
   const pointerPath = toolPath('gs-pointer', process.env.POE_DECK_POINTER)
   const window = Number(process.env.POE_DECK_WINDOW) || 3600
-  // Конфиг игрока, поверх него — переменные прогона (src/config.ts). Битый
-  // файл демон не роняет: ошибки уходят в журнал, а в силе остаётся всё, что
-  // разобралось. Под `Restart=always` выход по опечатке в конфиге был бы
-  // бесконечным перезапуском без цены.
+  // The player config, with the run variables on top (src/config.ts). A broken
+  // file does not crash the daemon: errors go to the log, and everything that
+  // parsed stays in force. Under `Restart=always` an exit on a config typo would be
+  // an endless restart with no price.
   const config = loadConfig()
   const effective = effectiveSettings(config.settings)
   const settings = effective.settings
   const panelTtl = (settings.panelTtl ?? 15) * 1000
-  // Сколько ждать, прежде чем свернуть редактор обратно в цену: у относительного
-  // указателя (Ф14) край панели задевается любым лишним движением пальца.
+  // How long to wait before the editor collapses back to the price: with a relative
+  // pointer (F14) any extra finger movement touches the panel edge.
   const leaveMs = Number(process.env.POE_DECK_LEAVE_MS ?? 1200)
-  // Сколько пикселей движения пальца на шаг значения в режиме правки границы.
+  // How many pixels of finger movement per value step in bound edit mode.
   const pxPerStep = Number(process.env.POE_DECK_PX_PER_STEP ?? 14)
-  // Рынок, с которого берётся цена. Умолчание — инстант-баяут: он не требует
-  // продавца онлайн и потому отвечает ценой, которую можно получить сейчас.
+  // The market the price comes from. The default is instant buyout: it does not need
+  // the seller online, so it answers with a price you can get now.
   const priceMode: SearchMode = settings.priceMode ?? DEFAULT_SEARCH_MODE
 
   const envFile = adoptSessionEnv()
@@ -494,7 +494,7 @@ export async function main (): Promise<number> {
   log(`price mode: ${MODE_LABEL[priceMode]} (${priceMode}); change with price_mode in the config or in the editor`)
   log(`session environment: ${envFile ?? 'no gamescope file, using what is set'}; DISPLAY=${display}`)
 
-  // ── проверка окружения и протокола ДО всего остального ────────────────────
+  // ── check the environment and the protocol BEFORE everything else ─────────
   const missing = missingTools(cmd => Bun.which(cmd) !== null, existsSync(clipHelperPath()))
   if (missing.length) {
     log(`✗  missing external commands: ${missing.join(', ')}`)
@@ -503,8 +503,8 @@ export async function main (): Promise<number> {
     if (missing.some(tool => tool.startsWith('gs-clip'))) log(`   gs-clip: ${HOW_TO_GET_TOOLS}`)
     return EXIT_NO_PROTOCOL
   }
-  // Путь чтения буфера — в журнал сразу: запасной xclip на Deck игрока значит,
-  // что набор распакован не целиком, и искать это по пропавшей цене незачем.
+  // Log the clipboard read path right away: the fallback xclip on the player Deck means
+  // the tool set is not fully unpacked, and there is no reason to find that through a missing price.
   log(`clipboard reader: ${currentClipboardReader()} (${clipHelperPath()})`)
 
   const verdict = await probeProtocol(probePath)
@@ -520,17 +520,17 @@ export async function main (): Promise<number> {
     log('   harmless for now, but look here first if something behaves oddly')
   }
 
-  // Парсер поднимается ДО прослушивания: первый запуск строит бинарные индексы
-  // донора, это секунды. По первому нажатию было бы поздно — буфер уедет.
+  // The parser starts BEFORE listening: the first start builds the binary indexes of
+  // the donor, that takes seconds. On the first press it would be too late: the clipboard moves on.
   const parser = await loadDonorParser(version)
   log('✓  donor parser loaded from the pin')
 
   const panel = openPanel(panelPath)
   if (panel.live) log('✓  renderer up, panel clears with an empty frame')
 
-  // Лига спрашивается ОДИН раз на сессию, а не на каждое нажатие: `/api/leagues`
-  // — такой же запрос к GGG, как и сам поиск, и тратить его по кнопке незачем.
-  // Отказ здесь демон не роняет: лига переспросится по первому предмету.
+  // The league is asked ONCE per session, not on every press: `/api/leagues`
+  // is the same kind of GGG request as the search itself, and there is no reason to spend it per button.
+  // A failure here does not crash the daemon: the league is asked again on the first item.
   let league: string | undefined
   try {
     league = await currentLeague('pc', settings.league)
@@ -540,22 +540,22 @@ export async function main (): Promise<number> {
     log(`⚠  could not resolve the league (${title}: ${detail}) — will ask again on the first item`)
   }
 
-  // ── автогашение ───────────────────────────────────────────────────────────
-  // Опрашивать, а не подписываться: `xprop -spy` держал бы ещё один долгий
-  // процесс ради состояния, которое меняется раз в минуту. Секунда опоздания
-  // ничего не стоит — предмет прайс-чекают в игре, а не в QAM.
+  // ── auto-hide ─────────────────────────────────────────────────────────────
+  // Poll, do not subscribe: `xprop -spy` would keep one more long-lived
+  // process for a state that changes once a minute. A second of delay
+  // costs nothing: items are price-checked in the game, not in the QAM.
   let inGame = await focusedApp(display) === features.steamAppId
   log(inGame ? '▶  game focused — handling presses' : '⏸  game is not on screen — hiding, still listening for the hotkey')
 
-  // Кадр «ready» — один раз на устройство, при первом попадании в игру после
-  // установки. Только поверх игры и только живым рендерером: кадр,
-  // ушедший в никуда, метку ставить не вправе, иначе игрок его так и не увидит.
+  // The "ready" frame shows once per device, on the first entry into the game after
+  // install. Only over the game and only with a live renderer: a frame
+  // sent nowhere must not set the marker, otherwise the player never sees it.
   const readyMarker = readyMarkerPath()
   let readyPending = panel.live && !existsSync(readyMarker)
   const showReady = (): void => {
     if (!readyPending || !inGame || !panel.live) return
     send({ kind: 'notice', frame: readyFrame() })
-    // Панель занята ценой — игрок уже жмёт кнопку; кадр подождёт следующего входа в игру.
+    // The panel is busy with a price, so the player is already pressing the button; the frame waits for the next game entry.
     if (overlay.mode !== 'notice') return
     readyPending = false
     const failed = markReadyShown(readyMarker)
@@ -565,7 +565,7 @@ export async function main (): Promise<number> {
     hintScreenshot('ready').catch(err => log(`⚠  screenshot hint not written: ${String(err)}`))
   }
 
-  // ── жизнь всю сессию ──────────────────────────────────────────────────────
+  // ── life for the whole session ────────────────────────────────────────────
   let running = true
   let parsed = 0
   let priced = 0
@@ -573,14 +573,14 @@ export async function main (): Promise<number> {
   let restarts = 0
   let probe: ReturnType<typeof Bun.spawn> | null = null
 
-  // Что на панели и когда её гасить — одно состояние (src/overlay.ts), а не
-  // россыпь таймеров по демону. Здесь остаётся только доставка: событие внутрь,
-  // кадр наружу, подтверждённый поиск — в сеть.
+  // What is on the panel and when to clear it is one state (src/overlay.ts), not
+  // timers scattered over the daemon. Only delivery stays here: event in,
+  // frame out, confirmed search to the network.
   let overlay: Overlay = newOverlay(priceMode)
   let searching = false
   let lastSearch = { stats: '', at: 0 }
-  // Буфер, из которого получен `overlay.last`. Повторный L5 по нему же — не
-  // «игра не скопировала», а «покажи ещё раз».
+  // The clipboard that `overlay.last` came from. A repeat L5 on it is not
+  // "the game did not copy" but "show it again".
   let pricedBuffer: string | undefined
 
   const send = (event: OverlayEvent): void => {
@@ -588,9 +588,9 @@ export async function main (): Promise<number> {
     const done = overlayStep(overlay, event, Date.now(), { ttlMs: panelTtl, leaveMs, pxPerStep })
     overlay = done.overlay
     if (done.frame) panel.show(done.frame)
-    // Гашение по сроку — не то же самое, что «игрок убрал»: результат остаётся
-    // возвращаемым, и приёмке нужно видеть, что срок действительно срабатывал
-    // (прогон #125 таких строк не имел вовсе).
+    // Clearing by TTL is not the same as "the player hid it": the result can still
+    // be brought back, and acceptance needs to see that the TTL really fired
+    // (run #125 had no such lines at all).
     if (event.kind === 'tick' && was !== 'idle' && overlay.mode === 'idle') {
       log(`⏸  panel cleared by ttl (${panelTtl / 1000}s) — L4 still brings the result back`)
     }
@@ -598,8 +598,8 @@ export async function main (): Promise<number> {
   }
 
   /**
-   * Повторный поиск по подтверждённым фильтрам. Одна операция за раз: серия
-   * нажатий не имеет права выстроить очередь запросов к GGG (требование эпика).
+   * A repeat search with the confirmed filters. One operation at a time: a series of
+   * presses must not build a queue of GGG requests (an epic requirement).
    */
   const runSearch = async (confirmed: EditorSearch): Promise<void> => {
     const item = overlay.item
@@ -607,16 +607,16 @@ export async function main (): Promise<number> {
     if (!item) return
     if (searching) { log('⚠  a search is already running — skipping this confirm'); return }
 
-    // Тот же набор подряд — не повод идти к GGG снова: на прогоне #101 десяток
-    // кликов по «подтвердить» дал десяток одинаковых запросов. Через паузу
-    // повтор разрешён: перепроверить цену тем же набором — законное желание.
-    // Режим входит в подпись: сменить рынок и переспросить — другой вопрос.
+    // The same set twice in a row is no reason to go to GGG again: on run #101 ten
+    // clicks on "confirm" gave ten identical requests. After a pause
+    // a repeat is allowed: rechecking the price with the same set is a fair wish.
+    // The mode is part of the signature: changing the market and asking again is a different question.
     const signature = JSON.stringify(confirmed)
     if (signature === lastSearch.stats && Date.now() - lastSearch.at < 3000) {
       log('⚠  the same filter set was just searched — skipping the repeat')
-      // Клик уже перевёл панель в «checking…», а ответа на отброшенный повтор не
-      // будет — панель висела бы в ожидании до следующей задней кнопки (прогон
-      // #133, 18:58:39). Ответ на тот же вопрос уже есть: его и показываем.
+      // The click already moved the panel to "checking…", and the dropped repeat gets no
+      // answer, so the panel would hang waiting until the next back button (run
+      // #133, 18:58:39). The answer to the same question already exists: show it.
       if (overlay.check) send({ kind: 'price', item, check: overlay.check })
       return
     }
@@ -627,12 +627,12 @@ export async function main (): Promise<number> {
       const t0 = Date.now()
       const check = await priceOf(item, { league, stats, mode })
       log(`   ${formatPriceCheck(item, check)}`)
-      // Поиск без `stats` — отмена вернула автонабор: в журнале это видно
-      // словом, а не пустым списком фильтров.
+      // A search without `stats` means cancel brought back the auto set: the log shows it
+      // as a word, not as an empty filter list.
       const label = stats ? `filters ${stats.length}` : 'auto set (cancel)'
-      // Какие именно id уехали — без этого пустая выдача неразличима: набор
-      // игрока слишком узкий или мод ищется не тем id. На прогоне #107 второе
-      // было видно только по фильтрам автоматического набора.
+      // Which ids exactly went out: without this an empty result is ambiguous: the
+      // player set is too narrow, or a mod is searched with the wrong id. On run #107 the second
+      // was visible only from the filters of the auto set.
       if (stats) log(`   filters: ${stats.map(stat => [stat.id, ...(stat.alt ?? [])].join('|')).join(', ')}`)
       log(`⏱  confirm -> price: ${Date.now() - t0} ms, ${label}, mode ${mode}`)
       send({ kind: 'price', item, check })
@@ -646,19 +646,19 @@ export async function main (): Promise<number> {
     }
   }
 
-  // Часы панели: гашение по сроку и сворачивание редактора, когда палец ушёл.
+  // The panel clock: clearing by TTL and collapsing the editor when the finger left.
   const overlayTimer = setInterval(() => send({ kind: 'tick' }), 200)
 
-  // Таймер фокуса заводится только здесь, когда `send` и `overlay` уже есть:
-  // раньше, до первого чтения буфера (до 30 с через distrobox), вход в игру
-  // звал `send` до его объявления — ReferenceError и падение демона.
+  // The focus timer starts only here, when `send` and `overlay` already exist:
+  // before, until the first clipboard read (up to 30 s through distrobox), entering the game
+  // called `send` before its declaration: ReferenceError and a daemon crash.
   const focusTimer = setInterval(() => {
     void focusedApp(display).then(app => {
       const next = app === features.steamAppId
       if (next === inGame) return
       inGame = next
-      // Панель не имеет права висеть поверх интерфейса Steam: сворачиваем всё,
-      // включая открытый редактор (спайк по оверлею, эксп. 6).
+      // The panel must not hang over the Steam interface: collapse everything,
+      // including an open editor (overlay spike, exp. 6).
       if (!inGame) send({ kind: 'focus', inGame: false })
       showReady()
       log(inGame
@@ -668,14 +668,14 @@ export async function main (): Promise<number> {
   }, 2000)
   showReady()
 
-  // ── курсор ────────────────────────────────────────────────────────────────
+  // ── cursor ────────────────────────────────────────────────────────────────
   //
-  // Левый тачпад двигает указатель на сервере ИГРЫ (ADR 0002, Ф13 и Ф14), и
-  // читается он опросом — ни фокуса, ни событий в слой оверлея не нужно.
-  // Отсутствие читалки демон не роняет: прайс-чек работает как раньше, просто
-  // редактор не разворачивается.
+  // The left touchpad moves the pointer on the GAME server (ADR 0002, F13 and F14), and
+  // it is read by polling: the overlay layer needs neither focus nor events.
+  // A missing reader does not crash the daemon: the price check works as before, only
+  // the editor does not open.
   let pointer: ReturnType<typeof Bun.spawn> | null = null
-  // Сервер, на котором читает текущая читалка. `null` — читалки нет.
+  // The server the current reader reads from. `null` means no reader.
   let pointerDisp: string | null = null
   let pointerBusy = false
   let warnedNoGame = false
@@ -683,9 +683,9 @@ export async function main (): Promise<number> {
   const readPointer = (proc: ReturnType<typeof Bun.spawn>, disp: string): void => {
     void (async () => {
       let tail = ''
-      // Нажатие берётся из той же строки, что координаты: клик тачпада забинден
-      // на левую кнопку мыши, и она приезжает маской XQueryPointer (Ф15).
-      // Действие — на ФРОНТЕ нажатия: удержание не должно молотить его подряд.
+      // The press comes from the same line as the coordinates: the touchpad click is bound
+      // to the left mouse button, and it arrives as the XQueryPointer mask (F15).
+      // The action fires on the press EDGE: holding must not fire it again and again.
       let held = false
       for await (const chunk of proc.stdout as ReadableStream<Uint8Array>) {
         const lines = (tail + new TextDecoder().decode(chunk)).split('\n')
@@ -693,8 +693,8 @@ export async function main (): Promise<number> {
         for (const line of lines) {
           const at = parsePointerLine(line)
           if (!at) continue
-          // Курсор трогает панель только в игре: жест в интерфейсе Steam не
-          // должен править черновик, которого не видно.
+          // The cursor touches the panel only in the game: a gesture in the Steam interface
+          // must not edit a draft nobody can see.
           if (!inGame) { held = isPressed(at.mask); continue }
           send({ kind: 'pointer', x: at.x, y: at.y })
           const now = isPressed(at.mask)
@@ -707,8 +707,8 @@ export async function main (): Promise<number> {
       }
     })().catch(err => log(`⚠  pointer reading broke off: ${String(err)}`))
       .finally(() => {
-        // Читалка ушла вместе с сервером игры (выход из PoE, перезапуск):
-        // забываем её, и следующий проход по фокусу найдёт игру заново.
+        // The reader went away with the game server (PoE exit, restart):
+        // forget it, and the next focus pass finds the game again.
         if (pointer !== proc) return
         pointer = null
         pointerDisp = null
@@ -716,7 +716,7 @@ export async function main (): Promise<number> {
       })
   }
 
-  /** Найти сервер игры и держать читалку курсора на нём. */
+  /** Find the game server and keep the cursor reader on it. */
   const ensurePointer = async (): Promise<void> => {
     if (pointerBusy || !running) return
     pointerBusy = true
@@ -745,7 +745,7 @@ export async function main (): Promise<number> {
     }
   }
 
-  /** Погасить читалку курсора. Через функцию: присваивания `pointer` живут в замыканиях. */
+  /** Stop the cursor reader. Done in a function because the `pointer` assignments live in closures. */
   const stopPointer = (): void => {
     const proc = pointer
     pointer = null
@@ -760,8 +760,8 @@ export async function main (): Promise<number> {
   } else {
     await ensurePointer()
   }
-  // Пока игра на экране, сервер её ищется снова: демон стартует раньше игры, а
-  // игра может перезапуститься на другом сервере (см. `pointerAction`).
+  // While the game is on screen, its server is looked up again: the daemon starts before the game, and
+  // the game can restart on another server (see `pointerAction`).
   const pointerTimer = hasPointerReader
     ? setInterval(() => { if (inGame) void ensurePointer() }, 2000)
     : undefined
@@ -778,11 +778,11 @@ export async function main (): Promise<number> {
     })
   }
 
-  /** Одно нажатие кнопки прайс-чека: буфер → парсер → трейд → панель. */
+  /** One press of the price check button: clipboard → parser → trade → panel. */
   const handlePress = async (line: string): Promise<void> => {
     log(line.trim())
-    // Отсчёт времени отклика начинается ЗДЕСЬ, на строке зонда: раньше в
-    // распоряжении демона ничего нет, а зонд печатает её сразу по событию.
+    // The response time count starts HERE, on the probe line: before that the daemon
+    // has nothing, and the probe prints the line right on the event.
     const t0 = Date.now()
     const { text, fresh } = await clipboardAfterTrigger(before, () => readClipboard(display))
     if (!text) {
@@ -790,18 +790,18 @@ export async function main (): Promise<number> {
       send({ kind: 'failure', press: true, failure: { title: 'clipboard empty', detail: 'the game copied nothing', todo: 'hover an item and press again' } })
       return
     }
-    // Буфер не сменился — значит, клиент игры предмет не отдал, а в буфере лежит
-    // прошлый. Разбирать его значит показать цену чужой вещи: на #147 семь
-    // нажатий из 13 так отдали Orb of Alchemy вместо наведённого предмета.
-    // Повтор на том же предмете попадает сюда же — текст совпадает побайтово,
-    // отличить его нечем; тестер выбрал честный отказ (10.11).
+    // The clipboard did not change, so the game client did not give the item, and the clipboard holds
+    // the previous one. Parsing it means showing the price of a different item: on #147 seven
+    // presses out of 13 gave Orb of Alchemy this way instead of the hovered item.
+    // A repeat on the same item lands here too: the text matches byte for byte,
+    // nothing tells them apart; the tester chose an honest refusal (10.11).
     //
-    // Исключение — буфер, по которому цена уже получена (rc6, замечание 15):
-    // L5 → L4 → L5 по тому же предмету молчал вовсе — отказ глушила убранная
-    // панель. Тогда показываем прежний результат так, как его вернул бы L4:
-    // без запроса, с именем предмета и возрастом цены. Если игра на самом деле
-    // не скопировала другую вещь, игрок видит на панели прежнее имя и
-    // «N min ago», а не свежую цену под чужим предметом, как на #147.
+    // The exception is a clipboard that already has a price (rc6, remark 15):
+    // L5 → L4 → L5 on the same item was silent, because the hidden panel swallowed
+    // the refusal. So we show the previous result the way L4 would bring it back:
+    // with no request, with the item name and the price age. If the game in fact
+    // did not copy another item, the player sees the old name and
+    // "N min ago" on the panel, not a fresh price under a different item, as on #147.
     if (!fresh) {
       if (isRepeatOfPriced(text, pricedBuffer, overlay.last)) {
         if (!inGame) { log('⏸  the game left the screen while reading the clipboard — not showing the item'); return }
@@ -817,11 +817,11 @@ export async function main (): Promise<number> {
     before = text
     const tClip = Date.now()
 
-    // Фокус перечитывается ПОСЛЕ ожидания буфера, а не только до нажатия:
-    // между ними проходит до трёх секунд, и за это время игрок успевает уйти
-    // в интерфейс Steam. Проверка «на входе» пропустила бы такой предмет к
-    // показу — сейчас это лишняя строчка в журнале, а с оверлеем это ровно
-    // то, что демон обязан не делать: рисовать поверх интерфейса Steam.
+    // The focus is read again AFTER the clipboard wait, not only before the press:
+    // up to three seconds pass between them, and in that time the player can leave
+    // to the Steam interface. A check "at the entry" would let such an item through to
+    // display. Now that is one extra log line, but with the overlay it is exactly
+    // what the daemon must not do: draw over the Steam interface.
     if (!inGame) {
       log('⏸  the game left the screen while reading the clipboard — not showing the item')
       return
@@ -841,13 +841,13 @@ export async function main (): Promise<number> {
     const withMods = sent.length
     log(`✓  item parsed${hasAdvancedBlock(text) ? '' : ' (no mod block — normal for currency and maps)'}`)
     log(`   shape: ${withMods ? `with mods (${withMods} in filter)` : 'no mods'}`)
-    // Сами id фильтров, а не только их число: пустая выдача при живом трейде
-    // читается по ним сразу — на прогоне #104 в запрос уходил `implicit.…`
-    // мод уникала, которого на трейде под этим типом нет.
+    // The filter ids themselves, not only their count: an empty result with a live trade
+    // is read from them at once. On run #104 the request carried an `implicit.…`
+    // mod of a unique that the trade does not have under this type.
     if (withMods) log(`   filters: ${sent.map(f => [f.id, ...(f.alt ?? [])].join('|')).join(', ')}`)
 
-    // Кадр ожидания уходит СРАЗУ: дальше идёт сеть, и без него панель молчит
-    // ровно то время, за которое пользователь решает, что вещь сломана.
+    // The waiting frame goes out AT ONCE: the network comes next, and without it the panel is silent
+    // for exactly the time in which the user decides the thing is broken.
     const tParse = Date.now()
     send({ kind: 'checking', item })
 
@@ -863,13 +863,13 @@ export async function main (): Promise<number> {
       log(`✓  price shown [${withMods ? 'with mods' : 'no mods'}]`)
       await hintScreenshot(withMods ? 'mods' : 'nomods')
     } catch (err) {
-      // Отказ трейда — это НЕ отказ демона: он остаётся жить, а человек
-      // узнаёт, что случилось, с панели, а не из журнала, которого он
-      // не читает. Молчащий оверлей неотличим от сломанного.
+      // A trade failure is NOT a daemon failure: the daemon stays alive, and the person
+      // learns what happened from the panel, not from the log, which they
+      // do not read. A silent overlay looks the same as a broken one.
       const failure = explainFailure(err)
       log(`✗  no price: ${failure.title} — ${failure.detail}`)
-      // Лига, которой трейд не знает, не должна жить до конца сессии: следующее
-      // нажатие спросит её заново — у GGG или у конфига.
+      // A league the trade does not know must not live until the session ends: the next
+      // press asks for it again, from GGG or from the config.
       if (err instanceof UnknownLeagueError) league = undefined
       send({ kind: 'failure', failure })
       await hintScreenshot('error')
@@ -878,9 +878,9 @@ export async function main (): Promise<number> {
   let presses: Promise<void> = Promise.resolve()
 
   while (running) {
-    // Зонд вооружается на окно и выходит — так он написан, и переписывать его
-    // ради демона незачем: перезапуск раз в час дешевле правки проверенного на
-    // железе кода. Дыра в прослушивании — доли секунды между процессами.
+    // The probe arms for a window and exits: that is how it is written, and there is no reason
+    // to rewrite it for the daemon: a restart once an hour is cheaper than editing code checked on
+    // hardware. The gap in listening is a fraction of a second between processes.
     const startedAt = Date.now()
     const chords = [keys, toggleKeys, actKeys].filter(Boolean)
     probe = Bun.spawn([probePath, '--seconds', String(window), ...chords.flatMap(chord => ['--keys', chord])], {
@@ -902,26 +902,26 @@ export async function main (): Promise<number> {
             : ''}`)
           continue
         }
-        // Жалобы зонда пересказываются, а всё остальное (тики «жив», баннер
-        // вооружения) — нет: иначе журнал за сутки распухнет на восемь тысяч
-        // строк «жив». Отбор не косметический — среди жалоб есть «менеджер
-        // хоткеев исчез из реестра», а это и есть то самое событие, ради
-        // которого писалась митигация приватного протокола. Проглотить его
-        // молча значило бы не заметить, что протокол отобрали.
+        // Probe complaints are copied, everything else ("alive" ticks, the arming
+        // banner) is not: otherwise the log grows by eight thousand
+        // "alive" lines a day. The filter is not cosmetic: among the complaints is "the hotkey
+        // manager left the registry", and that is the very event for
+        // which the private protocol mitigation was written. Swallowing it
+        // silently would mean not noticing that the protocol was taken away.
         if (isProbeComplaint(line)) {
           log(`probe: ${line.trim()}`)
           continue
         }
         if (!isTriggerLine(line)) continue
-        // Аккорд действия и аккорд прайс-чека приезжают одной строкой от одного
-        // зонда — различаются по имени аккорда в ней, а не по порядку.
-        // Второй жест: убрать панель или вернуть последний результат. Запроса
-        // к трейду он не делает никогда — ни при скрытии, ни при возврате.
+        // The action chord and the price check chord arrive as one line from one
+        // probe: they differ by the chord name in it, not by order.
+        // The second gesture: hide the panel or bring back the last result. It never makes
+        // a trade request, neither on hide nor on restore.
         if (toggleKeys && line.includes(`[${toggleKeys}]`)) {
           if (!inGame) { log('★  toggle outside the game — skipping'); continue }
-          // Что именно сделал жест, а не в каком состоянии панель осталась:
-          // «вернули цену такого-то предмета возрастом N минут» — это и есть
-          // доказательство цикла для приёмки (прогон #121 его не оставлял).
+          // What exactly the gesture did, not which state the panel is left in:
+          // "brought back the price of such an item, N minutes old" is the
+          // proof of the cycle for acceptance (run #121 did not leave it).
           const was = overlay
           send({ kind: 'toggle' })
           log(`★  toggle: ${describeToggle(was, overlay, Date.now())}`)
@@ -938,12 +938,12 @@ export async function main (): Promise<number> {
           continue
         }
 
-        // Прайс-чек уходит в очередь, а не ждётся здесь: пока он читает буфер
-        // (до трёх секунд) и ходит в трейд, цикл обязан читать строки зонда
-        // дальше. Иначе L4, нажатая во время поиска, обрабатывалась только после
-        // ответа — прогон #130: ни одного `hidden during a search`, а три L4 за
-        // ожидание буфера легли пачкой в одну секунду. Очередь последовательная:
-        // два прайс-чека подряд по-прежнему идут один за другим.
+        // The price check goes to a queue and is not awaited here: while it reads the clipboard
+        // (up to three seconds) and goes to the trade, the loop must keep reading probe lines.
+        // Otherwise an L4 pressed during a search was handled only after
+        // the answer: run #130 had no `hidden during a search`, and three L4 presses during
+        // the clipboard wait landed as one batch in one second. The queue is sequential:
+        // two price checks in a row still run one after the other.
         const pressLine = line
         presses = presses.then(() => handlePress(pressLine))
           .catch(err => log(`✗  price check broke off: ${String(err)}`))
@@ -952,9 +952,9 @@ export async function main (): Promise<number> {
     await probe.exited
     if (!running) break
 
-    // Зонд, умирающий сразу, — это не «окно кончилось», а поломка: gamescope
-    // ушёл, протокол отобрали, бинарь испортился. Без этой развилки демон
-    // крутил бы её в цикле молча и выглядел бы живым.
+    // A probe that dies at once is not "the window expired" but a failure: gamescope
+    // went away, the protocol was taken away, the binary broke. Without this branch the daemon
+    // would spin on it in a loop silently and look alive.
     if (Date.now() - startedAt < 10_000) {
       restarts++
       if (restarts >= 3) {

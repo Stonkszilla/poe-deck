@@ -1,26 +1,26 @@
-// Раскладка Steam Input глазами `poe-deck doctor`.
+// The Steam Input layout as `poe-deck doctor` sees it.
 //
-// Шаблон и демон договариваются только аккордами (ADR 0002 Ф17), и
-// игрок поломку договора не видит: нажатие просто не доходит. Поэтому doctor
-// сверяет не «какая кнопка», а «есть ли кнопка, которая шлёт аккорд демона», —
-// в личной конфигурации игры, которую Steam пишет после Apply:
+// The template and the daemon agree only on chords (ADR 0002 F17), and
+// the player does not see a broken contract: the press simply does not arrive. So doctor
+// checks not "which button" but "is there a button that sends the daemon chord",
+// in the personal game configuration that Steam writes after Apply:
 //
-//   $STEAM_DIR/steamapps/common/Steam Controller Configs/<аккаунт>/config/<AppId>/controller_neptune.vdf
+//   $STEAM_DIR/steamapps/common/Steam Controller Configs/<account>/config/<AppId>/controller_neptune.vdf
 //
-// Путь снят с живого Deck (спайк steam-input-two-outputs, прогон #54). Номер
-// кнопки здесь не проверяется намеренно: игрок вправе перенести жест на другую
-// кнопку, и это не поломка.
+// The path comes from a live Deck (spike steam-input-two-outputs, run #54). The button
+// is not checked here on purpose: the player may move the gesture to another
+// button, and that is not a breakage.
 
 import { existsSync, readdirSync, readFileSync } from 'node:fs'
 import { basename, join } from 'node:path'
 
-/** Узел KeyValues: ключи повторяются (три `Full_Press` подряд), поэтому список пар. */
+/** A KeyValues node: keys repeat (three `Full_Press` in a row), so it is a list of pairs. */
 export type Kv = [string, string | Kv][]
 
-/** Разбор KeyValues Valve: строки в кавычках, блоки в фигурных скобках, `//` — комментарий. */
+/** Parses Valve KeyValues: quoted strings, blocks in curly braces, `//` is a comment. */
 export function parseKv (text: string): Kv {
-  // Комментарий ловится той же регуляркой после строк: «//» внутри строки
-  // (`template://…`) комментарием не считается.
+  // The same regex catches comments after strings: "//" inside a string
+  // (`template://…`) is not a comment.
   const tokens = [...text.matchAll(/"((?:[^"\\]|\\.)*)"|[{}]|\/\/[^\n]*/g)]
     .filter(match => !match[0].startsWith('//'))
     .map(match => match[1] ?? match[0])
@@ -41,7 +41,7 @@ const all = (node: Kv, key: string): (string | Kv)[] =>
 const blocks = (node: Kv, key: string): Kv[] => all(node, key).filter((v): v is Kv => typeof v !== 'string')
 const strings = (node: Kv, key: string): string[] => all(node, key).filter((v): v is string => typeof v === 'string')
 
-/** Имена клавиш Steam Input → keysym, как их называют gamescope и демон. */
+/** Steam Input key names → keysym, as gamescope and the daemon name them. */
 const KEYSYM: Record<string, string> = {
   LEFT_CONTROL: 'Control_L',
   RIGHT_CONTROL: 'Control_R',
@@ -53,10 +53,10 @@ const KEYSYM: Record<string, string> = {
 
 export const keysym = (steamKey: string): string => KEYSYM[steamKey] ?? steamKey
 
-/** Аккорд одного входа: клавиши `key_press` его активаторов в порядке задержек. */
+/** The chord of one input: the `key_press` keys of its activators, in delay order. */
 export interface InputChord {
   input: string
-  /** Кнопка Deck, как её зовёт игрок: `L5`, `L3`, `RPad-click`. */
+  /** The Deck button as the player names it: `L5`, `L3`, `RPad-click`. */
   button: string
   keys: string
   delays: number[]
@@ -76,9 +76,9 @@ const CLICK: Record<string, string> = {
 }
 
 /**
- * Имя кнопки по входу и источнику группы. Вход `click` есть у стика и у тачпада,
- * поэтому кнопку называет источник, на который пресет вешает группу; задние
- * кнопки живут в группе `switches` и называются по входу.
+ * The button name from the input and the group source. Both the stick and the trackpad
+ * have a `click` input, so the source that the preset binds the group to names the
+ * button; the back buttons live in the `switches` group and take the input name.
  */
 export function buttonOf (input: string, source?: string): string {
   if (input === 'click') return (source && CLICK[source]) ?? 'click'
@@ -86,9 +86,9 @@ export function buttonOf (input: string, source?: string): string {
 }
 
 /**
- * Аккорды всех входов активных групп. Активная группа — та, что пресет вешает на
- * источник словом `active`; неактивные группы (режимы-модификаторы) в аккорд по
- * кнопке не попадают. Пресета нет — смотрим все группы.
+ * Chords of all inputs of the active groups. An active group is one that the preset binds
+ * to a source with the word `active`; inactive groups (modifier modes) do not add to the
+ * chord of a button. With no preset, all groups count.
  */
 export function chordsOf (root: Kv): InputChord[] {
   const groups = blocks(root, 'group')
@@ -107,8 +107,8 @@ export function chordsOf (root: Kv): InputChord[] {
       for (const [input, node] of inputs) {
         if (typeof node === 'string') continue
         const presses: Array<{ key: string, delay: number }> = []
-        // Любой тип активатора, не только Full_Press: жест, перенесённый
-        // игроком на долгое или двойное нажатие, всё равно шлёт аккорд.
+        // Any activator type, not only Full_Press: a gesture that the player
+        // moved to a long or double press still sends the chord.
         for (const activators of blocks(node, 'activators')) {
           for (const press of activators.flatMap(([, v]) => typeof v === 'string' ? [] : [v])) {
             const settings = blocks(press, 'settings')[0]
@@ -128,31 +128,31 @@ export function chordsOf (root: Kv): InputChord[] {
   return out
 }
 
-/** Где Steam хранит данные: `STEAM_DIR`, по умолчанию как на SteamOS. */
+/** Where Steam keeps its data: `STEAM_DIR`, by default the SteamOS location. */
 export function steamDir (env = process.env): string {
   return env.STEAM_DIR || `${env.HOME}/.local/share/Steam`
 }
 
 /**
- * Раскладки игры по всем аккаунтам Steam на устройстве — те, что Steam
- * применяет.
+ * The game layouts across all Steam accounts on the device: the ones that Steam
+ * applies.
  *
- * Приёмка на Deck показала, что одного `controller_neptune.vdf` мало. Steam пишет
- * раскладку и в файл с серийным номером контроллера (`FYZZ5510192C.vdf` рядом), а
- * в `config/configset_<серийник>.vdf` хранит ссылку на то, что выбрано:
- * `"238960" { "template" "…" }`. После Apply шаблона ссылка ведёт в каталог
- * шаблонов, и своего файла у игры может не быть вовсе — doctor тогда говорил
- * «no layout», хотя шаблон применён. Облачная ссылка (`CLOUD_<AppId>/…`) с диска
- * не читается и пропускается.
+ * Acceptance on the Deck showed that `controller_neptune.vdf` alone is not enough. Steam also
+ * writes the layout to a file named after the controller serial number (`FYZZ5510192C.vdf` next to it),
+ * and keeps a reference to the selection in `config/configset_<serial>.vdf`:
+ * `"238960" { "template" "…" }`. After Apply of a template the reference points into the
+ * templates directory, and the game may have no file of its own at all; doctor then said
+ * "no layout" although the template was applied. A cloud reference (`CLOUD_<AppId>/…`) cannot
+ * be read from disk and is skipped.
  *
- * Файл в `config/<AppId>` сам по себе ничего не значит. На Deck 20.11
- * в `FYZZ5510192C.vdf` лежал прайс-чек на L3 от шаблона rc3, а configset того же
- * серийника выбирал шаблон с прайс-чеком на L5 — и цену давал L5. Поэтому
- * применённым считается только то, на что указывает configset: шаблон по
- * `template`, а по `"autosave" "1"` — файл `config/<AppId>/<имя configset>.vdf`
- * (так Steam пишет `controller_neptune.vdf` с `url autosave://…`). Остальные файлы
- * игры — `stale`. Если configset не выбрал ничего читаемого (записи нет или
- * ссылка облачная), применённое не определить, и в `applied` идут все файлы игры.
+ * A file in `config/<AppId>` means nothing by itself. On the Deck on 20.11,
+ * `FYZZ5510192C.vdf` held a price check on L3 from template rc3, while the configset of the same
+ * serial selected the template with the price check on L5, and L5 gave the price. So only
+ * what the configset points to counts as applied: the template by
+ * `template`, and with `"autosave" "1"` the file `config/<AppId>/<configset name>.vdf`
+ * (this is how Steam writes `controller_neptune.vdf` with `url autosave://…`). The other game
+ * files are `stale`. If the configset selected nothing readable (no entry or a
+ * cloud reference), the applied layout is unknown, and `applied` gets all game files.
  */
 export function layoutChoice (appId: number, steam = steamDir()): { applied: string[], stale: string[] } {
   const root = join(steam, 'steamapps/common/Steam Controller Configs')
@@ -186,12 +186,12 @@ export function layoutChoice (appId: number, steam = steamDir()): { applied: str
   return { applied, stale: own.filter(path => !applied.includes(path)) }
 }
 
-/** Раскладки, которые Steam применяет к игре (`layoutChoice`). */
+/** The layouts that Steam applies to the game (`layoutChoice`). */
 export function appliedLayouts (appId: number, steam = steamDir()): string[] {
   return layoutChoice(appId, steam).applied
 }
 
-/** Запись `"<AppId>" { … }` из configset Steam: что выбрано для игры. */
+/** The `"<AppId>" { … }` entry from a Steam configset: what is selected for the game. */
 export function configsetChoice (text: string, appId: number): { template: string } | { autosave: true } | undefined {
   for (const [, top] of parseKv(text)) {
     if (typeof top === 'string') continue
@@ -205,34 +205,34 @@ export function configsetChoice (text: string, appId: number): { template: strin
   return undefined
 }
 
-/** Ссылка на шаблон из configset Steam, если выбран шаблон. */
+/** The template reference from a Steam configset, if a template is selected. */
 export function configsetTemplate (text: string, appId: number): string | undefined {
   const choice = configsetChoice(text, appId)
   return choice && 'template' in choice ? choice.template : undefined
 }
 
-/** Лежит ли шаблон poe-deck там, откуда Steam берёт шаблоны (tools/steam-template.sh). */
+/** Is the poe-deck template where Steam takes templates from (tools/steam-template.sh). */
 export function templateInstalled (steam = steamDir()): boolean {
   return existsSync(join(steam, 'controller_base/templates/controller_neptune_poe_deck.vdf'))
 }
 
-/** Вердикт по одной личной конфигурации: каких аккордов демона в ней нет и где лежат остальные. */
+/** The verdict for one personal configuration: which daemon chords it lacks and where the others are. */
 export interface LayoutVerdict {
   path: string
   missing: string[]
-  /** Аккорд → кнопки, которые его шлют, в порядке `wanted`. */
+  /** Chord → the buttons that send it, in `wanted` order. */
   buttons: Record<string, string[]>
 }
 
-/** Аккорд как набор клавиш: gamescope сравнивает наборы нажатых клавиш, а не порядок. */
+/** A chord as a set of keys: gamescope compares sets of pressed keys, not their order. */
 const asSet = (chord: string): string => chord.split('+').sort().join('+')
 
 /**
- * Какие из нужных аккордов не шлёт ни одна кнопка. Сравниваются наборы клавиш:
- * gamescope срабатывает на точный набор нажатых, и при любом порядке нажатия
- * последний шаг даёт тот же набор. Разнос задержек в шаблоне нужен для
- * надёжности доставки, а не для порядка — его договор держит
- * tools/steam-template.test.ts, а не doctor.
+ * Which of the wanted chords no button sends. Key sets are compared:
+ * gamescope fires on the exact set of pressed keys, and in any press order
+ * the last step gives the same set. The template spreads the delays for
+ * reliable delivery, not for order; tools/steam-template.test.ts holds that
+ * contract, not doctor.
  */
 export function checkLayout (path: string, wanted: string[]): LayoutVerdict {
   const root = blocks(parseKv(readFileSync(path, 'utf8')), 'controller_mappings')[0] ?? []

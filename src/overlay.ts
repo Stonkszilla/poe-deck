@@ -1,28 +1,28 @@
-// Панель как одно состояние: цена, редактор, беда, пустота — и переходы между ними.
+// The panel as one state: price, editor, failure, nothing, and the transitions between them.
 //
-// Сборка ежедневного сценария. До этого файла демон сам решал, какой
-// кадр показать, и знал про таймеры; теперь он занимается процессами, а решения
-// принимаются здесь — без X11, без сети и без часов, поэтому проверяются
-// обычным `bun test`.
+// The assembly of the daily scenario. Before this file the daemon itself decided which
+// frame to show and knew about timers; now it handles processes, and the decisions
+// are made here, without X11, without the network and without a clock, so they are tested
+// with plain `bun test`.
 //
-// ── Почему у редактора нет кнопки «открыть» ────────────────────────────────
+// ── Why the editor has no "open" button ────────────────────────────────────
 //
-// Свободных задних кнопок на Deck ровно одна (ADR 0002: нижняя левая занята
-// прайс-чеком, нижняя правая — шаблоном `gamepad_fps`), и она нужна под
-// действие. Поэтому редактор **разворачивается наведением**: курсор заехал на
-// панель — появился список модов, увёл палец — панель свернулась обратно в
-// цену. Кнопок это не стоит вовсе.
+// The Deck has exactly one free back button (ADR 0002: the lower left one is taken
+// by the price check, the lower right one by the `gamepad_fps` template), and it is needed
+// for the action. So the editor **opens on hover**: the cursor moves onto
+// the panel and the mod list appears, the finger moves away and the panel folds back to
+// the price. This costs no buttons at all.
 //
-// Так можно потому, что замеры дали редкое сочетание: курсор двигает ЛЕВЫЙ
-// тачпад и только он (Ф14), то есть у панели свой манипулятор, не отнятый у
-// игры, а клик тачпада PoE всё равно игнорирует (Ф12).
+// This works because the measurements gave a rare combination: the cursor is moved by the LEFT
+// trackpad and only by it (F14), so the panel has its own pointing device that is not taken
+// from the game, and PoE ignores the trackpad click anyway (F12).
 //
-// ── Два таймера, и они про разное ──────────────────────────────────────────
+// ── Two timers, and they are about different things ────────────────────────
 //
-//  - `hideAt` — сколько цена висит на экране (POE_DECK_PANEL_TTL). Пока палец
-//    на панели, он не тикает: гасить то, что человек читает и правит, нельзя.
-//  - `leaveAt` — сколько ждать, прежде чем свернуть редактор обратно. Без
-//    задержки панель схлопывалась бы от любого дрожания пальца у края.
+//  - `hideAt`: how long the price stays on the screen (POE_DECK_PANEL_TTL). While the finger
+//    is on the panel, it does not tick: we must not hide what a person reads and edits.
+//  - `leaveAt`: how long to wait before folding the editor back. Without
+//    a delay the panel would collapse from any finger jitter at the edge.
 
 import { newEditor, reduce, slots, type Editor, type EditorSearch } from './editor'
 import {
@@ -53,56 +53,56 @@ export interface Overlay {
   item?: PricedItem
   check?: PriceCheck
   editor?: Editor
-  /** Когда гасить панель, мс. `0` — срока нет (кадр сменится следующим). */
+  /** When to hide the panel, ms. `0` means no deadline (the next frame replaces it). */
   hideAt: number
-  /** Когда свернуть редактор обратно в цену. `0` — курсор на панели. */
+  /** When to fold the editor back to the price. `0` means the cursor is on the panel. */
   leaveAt: number
   /**
-   * Откуда отсчитывать правку значения: Y курсора на момент входа в неё.
-   * В режиме правки палец не выбирает строку, а крутит число — как колесо.
+   * Where the value edit counts from: the cursor Y at the moment the edit started.
+   * In edit mode the finger does not select a line, it turns the number like a wheel.
    */
   grabY?: number
-  /** Где курсор был в последний раз. Отсюда берётся точка отсчёта правки. */
+  /** Where the cursor was the last time. The edit reference point comes from here. */
   lastY?: number
   /**
-   * Рынок по умолчанию для нового предмета. Режим правится в редакторе, но
-   * следующий предмет начинает с того, что выбрано демоном, а не с заводского:
-   * игрок выбирает рынок один раз за сессию, а не на каждую вещь.
+   * The default market for a new item. The mode is edited in the editor, but
+   * the next item starts with what the daemon selected, not with the factory default:
+   * the player selects the market once per session, not for each item.
    */
   priceMode: SearchMode
   /**
-   * Последний завершённый результат сессии. Держится, когда панель погашена —
-   * жестом или по сроку, — чтобы вернуть его на экран без нового запроса к
-   * трейду (обязательное действие эпика).
+   * The last finished result of the session. It is kept when the panel is hidden,
+   * by the gesture or by the deadline, so that it can be brought back to the screen without a new
+   * request to trade (a required action of the epic).
    */
   last?: LastResult
   /**
-   * Игрок убрал панель сам. Поздний ответ на уже идущий поиск её не открывает:
-   * убрал — значит сейчас смотрит в игру, а не в цену.
+   * The player hid the panel. A late answer to a search already in progress does not open it:
+   * hidden means the player looks at the game now, not at the price.
    */
   hidden?: boolean
   /**
-   * Беда на экране. Держится ради лимита: конец его окна — событие, по
-   * которому кадр меняется на «можно снова».
+   * The failure on the screen. It is kept for the rate limit: the end of its window is the event
+   * on which the frame changes to "you can press again".
    */
   failure?: Failure
 }
 
-/** Завершённый результат: что показывали, по какому набору и когда. */
+/** A finished result: what was shown, with which set and when. */
 export interface LastResult {
   item: PricedItem
   check: PriceCheck
   editor: Editor
-  /** Когда получен. Возраст едет на панель: цена без времени — обещание. */
+  /** When it was received. The age goes to the panel: a price without a time is a promise. */
   at: number
 }
 
 export interface OverlayTimes {
-  /** Сколько цена живёт на экране без пальца. */
+  /** How long the price lives on the screen without a finger. */
   ttlMs: number
-  /** Сколько ждать после ухода курсора, прежде чем свернуть редактор. */
+  /** How long to wait after the cursor leaves before folding the editor. */
   leaveMs: number
-  /** Сколько пикселей движения пальца на один шаг значения. */
+  /** How many pixels of finger motion make one value step. */
   pxPerStep?: number
 }
 
@@ -112,29 +112,29 @@ export type OverlayEvent =
   | { kind: 'checking', item: PricedItem }
   | { kind: 'price', item: PricedItem, check: PriceCheck }
   /**
-   * `press` — отказ на само нажатие L5, а не поздний ответ поиска: игрок только
-   * что попросил панель, и прежнее «убрал жестом» его не глушит.
+   * `press` is a failure on the L5 press itself, not a late search answer: the player just
+   * asked for the panel, and the earlier "hidden with the gesture" does not mute it.
    */
   | { kind: 'failure', failure: Failure, press?: boolean }
   | { kind: 'pointer', x: number, y: number }
   | { kind: 'act' }
-  /** Второй жест: убрать панель или вернуть последний результат, без запроса. */
+  /** The second gesture: hide the panel or bring back the last result, without a request. */
   | { kind: 'toggle' }
   /**
-   * L5 по тому же буферу, по которому уже есть результат: показать его, как
-   * возврат L4, без запроса. Нового предмета нет — нового вопроса к трейду тоже.
+   * L5 on the same clipboard that already has a result: show it, like
+   * the L4 recall, without a request. No new item means no new question to trade either.
    */
   | { kind: 'recall' }
   | { kind: 'focus', inGame: boolean }
-  /** Сообщение демона, не связанное с предметом: кадр «ready» первого запуска. */
+  /** A daemon message not tied to an item: the "ready" frame of the first launch. */
   | { kind: 'notice', frame: string[] }
   | { kind: 'tick' }
 
 export interface OverlayStep {
   overlay: Overlay
-  /** Кадр, если он изменился. Нет — значит перерисовывать нечего. */
+  /** The frame, if it changed. None means there is nothing to redraw. */
   frame?: string[]
-  /** Подтверждённый набор: фильтры и режим рынка, ровно на один поиск. */
+  /** The confirmed set: filters and market mode, for exactly one search. */
   search?: EditorSearch
 }
 
@@ -142,8 +142,8 @@ export const newOverlay = (mode: SearchMode = DEFAULT_SEARCH_MODE): Overlay =>
   ({ mode: 'idle', hideAt: 0, leaveAt: 0, priceMode: mode })
 
 /**
- * Последний результат обратно на панель: тот же предмет, тот же набор, возраст.
- * Общий для L4 и повторного L5, чтобы два пути возврата не разошлись.
+ * The last result back on the panel: the same item, the same set, the age.
+ * Shared by L4 and a repeated L5, so that the two recall paths do not drift apart.
  */
 function restore (overlay: Overlay, last: LastResult, now: number, times: OverlayTimes): OverlayStep {
   return {
@@ -162,16 +162,16 @@ function restore (overlay: Overlay, last: LastResult, now: number, times: Overla
   }
 }
 
-/** Кадр редактора и его геометрия — одним вызовом, чтобы они не разъехались. */
+/** The editor frame and its geometry in one call, so that they do not drift apart. */
 function view (overlay: Overlay, layout?: EditorLayout): { lines: string[], zones: EditorZone[], box: EditorZone } {
   return editorView(overlay.item!, overlay.editor!, layout, overlay.check)
 }
 
 /**
- * Событие → новое состояние панели.
+ * Event to a new panel state.
  *
- * `now` передаётся снаружи: часы — это тоже внешний мир, и без них переходы
- * проверяются тестом, а не прогоном на железе.
+ * `now` comes from outside: the clock is also the outside world, and without it the transitions
+ * are checked by a test, not by a run on hardware.
  */
 export function step (
   overlay: Overlay,
@@ -182,7 +182,7 @@ export function step (
 ): OverlayStep {
   switch (event.kind) {
     case 'checking':
-      // Нажатие прайс-чека — сам по себе возврат панели: игрок смотрит на цену.
+      // A price-check press is itself a panel recall: the player looks at the price.
       return {
         overlay: {
           mode: 'checking',
@@ -196,9 +196,9 @@ export function step (
       }
 
     case 'price': {
-      // Новый предмет — новый черновик: фильтры прошлого предмета не переносятся
-      // (требование эпика). Тот же предмет после подтверждения — состояние
-      // редактора сохраняется, иначе правки исчезали бы вместе с ответом.
+      // A new item means a new draft: filters of the previous item do not carry over
+      // (epic requirement). The same item after confirm keeps the editor
+      // state, otherwise the edits would disappear together with the answer.
       const same = overlay.item === event.item && overlay.editor
       const editor = same ? overlay.editor! : newEditor(event.item, overlay.priceMode)
       const next: Overlay = {
@@ -208,14 +208,14 @@ export function step (
         editor,
         hideAt: overlay.mode === 'editor' ? 0 : now + times.ttlMs,
         leaveAt: overlay.mode === 'editor' ? overlay.leaveAt : 0,
-        // Выбранный игроком рынок переживает ответ и переезжает на следующий
-        // предмет: менять его заново на каждую вещь — работа, а не настройка.
+        // The market selected by the player survives the answer and moves to the next
+        // item: selecting it again for each item is work, not a setting.
         priceMode: editor.appliedMode
       }
       const last: LastResult = { item: event.item, check: event.check, editor, at: now }
 
-      // Поздний ответ на поиск, который игрок уже «отменил» жестом: результат
-      // запоминаем, но панель сама не поднимаем (требование эпика).
+      // A late answer to a search that the player already "cancelled" with the gesture: we
+      // remember the result, but do not raise the panel by ourselves (epic requirement).
       if (overlay.hidden) {
         return { overlay: { ...newOverlay(overlay.priceMode), last, hidden: true } }
       }
@@ -246,13 +246,13 @@ export function step (
       if (!overlay.item || !overlay.editor) return { overlay }
       if (overlay.mode !== 'price' && overlay.mode !== 'editor') return { overlay }
 
-      // Правка границы: палец крутит число, а не выбирает строку. Панель при
-      // этом не сворачивается, даже если курсор уехал за её край — иначе
-      // значение нельзя было бы докрутить до конца.
+      // Bound edit: the finger turns the number and does not select a line. The panel
+      // does not fold even if the cursor went past its edge, otherwise
+      // the value could not be turned all the way.
       if (overlay.editor.editing) {
         const px = times.pxPerStep ?? 14
         const from = overlay.grabY ?? event.y
-        const steps = Math.trunc((from - event.y) / px) // вверх — больше
+        const steps = Math.trunc((from - event.y) / px) // up means more
         if (!steps) return { overlay }
         const editor = Array.from({ length: Math.abs(steps) })
           .reduce<Editor>(state => reduce(state, steps > 0 ? 'next' : 'prev').editor, overlay.editor)
@@ -267,8 +267,8 @@ export function step (
                       event.y >= box.y && event.y < box.y + box.h
 
       if (!onPanel) {
-        // Курсор ушёл — не сворачиваем сразу: у относительного указателя (Ф14)
-        // край панели задевается любым лишним движением пальца.
+        // The cursor left: we do not fold at once. With a relative pointer (F14)
+        // any extra finger motion touches the panel edge.
         if (overlay.mode !== 'editor' || overlay.leaveAt) return { overlay: { ...overlay, lastY: event.y } }
         return { overlay: { ...overlay, lastY: event.y, leaveAt: now + times.leaveMs } }
       }
@@ -281,8 +281,8 @@ export function step (
       }
       const next: Overlay = { ...overlay, mode: 'editor', editor, lastY: event.y, hideAt: 0, leaveAt: 0 }
 
-      // Перерисовываем только когда что-то изменилось: курсор шевелится
-      // десятки раз в секунду, и слать кадр на каждое движение незачем.
+      // Redraw only when something changed: the cursor moves
+      // dozens of times per second, and there is no reason to send a frame on each motion.
       const changed = overlay.mode !== 'editor' || editor.index !== overlay.editor.index
       return changed ? { overlay: next, frame: view(next, layout).lines } : { overlay: next }
     }
@@ -290,8 +290,8 @@ export function step (
     case 'act': {
       if (overlay.mode !== 'editor' || !overlay.editor) return { overlay }
       const done = reduce(overlay.editor, 'act')
-      // Вход в правку: дальше палец крутит значение, и отсчёт ведётся от точки,
-      // где он был в этот момент. Выход — та же кнопка, точка отсчёта сбрасывается.
+      // Edit entry: from here the finger turns the value, and the count starts at the point
+      // where it was at this moment. Exit is the same button, the reference point is reset.
       const next: Overlay = {
         ...overlay,
         editor: done.editor,
@@ -299,8 +299,8 @@ export function step (
       }
       if (!done.search) return { overlay: next, frame: view(next, layout).lines }
 
-      // Подтверждение: панель честно говорит «ищу цену», а поиск уходит наружу.
-      // Предмет остаётся тем же — значит черновик переживёт ответ.
+      // Confirm: the panel honestly says "checking price", and the search goes out.
+      // The item stays the same, so the draft survives the answer.
       return {
         overlay: { ...next, mode: 'checking', hideAt: 0, leaveAt: 0 },
         frame: checkingFrame(overlay.item!),
@@ -309,8 +309,8 @@ export function step (
     }
 
     case 'toggle': {
-      // Панель на экране — убрать. Последний результат при этом не теряется:
-      // тем же жестом он возвращается.
+      // The panel is on the screen: hide it. The last result is not lost:
+      // the same gesture brings it back.
       if (overlay.mode !== 'idle') {
         return {
           overlay: { ...newOverlay(overlay.priceMode), last: overlay.last, hidden: true },
@@ -318,11 +318,11 @@ export function step (
         }
       }
 
-      // Возврат. Нового запроса нет и быть не должно: показываем ровно то, что
-      // уже получено, вместе с возрастом и набором фильтров, по которому оно
-      // получено.
-      // Возвращать нечего — подсказка вместо молчания. Это сообщение, а не
-      // цена: живёт тот же срок, что кадр ready, и гасится тем же L4.
+      // Recall. There is no new request and there must not be one: we show exactly what
+      // was already received, together with the age and the filter set it was
+      // received with.
+      // Nothing to bring back: a hint instead of silence. This is a message, not
+      // a price: it lives as long as the ready frame and is hidden by the same L4.
       const last = overlay.last
       if (!last) {
         return {
@@ -335,21 +335,21 @@ export function step (
     }
 
     case 'recall': {
-      // Тот же предмет по L5 после L4 молчал: буфер не сменился, отказ
-      // «game did not copy» глушила убранная панель (rc6, замечание 15).
-      // Показываем то же, что вернул бы L4, — с возрастом, чтобы старую цену
-      // нельзя было принять за свежую. Без результата показывать нечего: демон
-      // такое событие не шлёт.
+      // The same item on L5 after L4 was silent: the clipboard did not change, and the
+      // "game did not copy" failure was muted by the hidden panel (rc6, remark 15).
+      // We show the same thing L4 would bring back, with the age, so that an old price
+      // cannot be taken for a fresh one. Without a result there is nothing to show: the daemon
+      // does not send such an event.
       const last = overlay.last
       if (!last) return { overlay }
       return restore(overlay, last, now, times)
     }
 
     case 'notice':
-      // Сообщение не перебивает цену или правку: игрок, который уже жмёт
-      // кнопку, знает, что poe-deck работает. Убранная жестом панель тоже
-      // остаётся убранной. Живёт сообщение тот же срок, что и цена, и гасится
-      // тем же L4.
+      // A message does not interrupt a price or an edit: a player who already presses
+      // the button knows that poe-deck works. A panel hidden with the gesture also
+      // stays hidden. The message lives as long as the price and is hidden
+      // by the same L4.
       if (overlay.mode !== 'idle' || overlay.hidden) return { overlay }
       return {
         overlay: { ...newOverlay(overlay.priceMode), last: overlay.last, mode: 'notice', hideAt: now + times.ttlMs },
@@ -358,14 +358,14 @@ export function step (
 
     case 'focus':
       if (event.inGame) return { overlay }
-      // За пределами PoE панели нет вовсе: она не имеет права висеть поверх
-      // интерфейса Steam (спайк по оверлею, эксп. 6).
+      // Outside PoE there is no panel at all: it must not hang over
+      // the Steam interface (overlay spike, exp. 6).
       return { overlay: { ...newOverlay(overlay.priceMode), last: overlay.last }, frame: clearFrame() }
 
     case 'tick': {
-      // Окно лимита кончилось, пока его кадр на экране: «retry in 42s» без
-      // перерисовки так и висел бы, хотя жать уже можно. Это смена состояния,
-      // а не секундомер — кадр уходит один раз, срок гашения начинается заново.
+      // The rate limit window ended while its frame is on the screen: "retry in 42s" without
+      // a redraw would stay there, although the player can press already. This is a state change,
+      // not a stopwatch: the frame goes out once, and the hide deadline starts again.
       const retryAt = overlay.failure?.retryAt
       if (overlay.mode === 'error' && retryAt != null && now >= retryAt) {
         return {
@@ -378,8 +378,8 @@ export function step (
         return { overlay: next, frame: priceFrame(overlay.item!, overlay.check!) }
       }
       if (overlay.hideAt && now >= overlay.hideAt) {
-        // Срок вышел — панель гаснет, но результат остаётся возвращаемым:
-        // гашение по таймеру не то же самое, что «игрок убрал».
+        // The deadline passed: the panel goes out, but the result can still be brought back:
+        // hiding on a timer is not the same as "the player hid it".
         return { overlay: { ...newOverlay(overlay.priceMode), last: overlay.last }, frame: clearFrame() }
       }
       return { overlay }
@@ -388,18 +388,18 @@ export function step (
 }
 
 /**
- * Что сделал жест — строкой в журнал. `describe` говорит только про состояние
- * панели, и по нему нельзя отличить «вернули прежний результат» от «на панели и
- * так была цена»: в прогоне #121 одиннадцать нажатий L4 дали `toggle: price` и
- * `toggle: idle`, а доказательства возврата не осталось. Приёмка эпика требует
- * десять циклов — значит цикл должен быть виден в журнале.
+ * What the gesture did, as a log line. `describe` tells only about the panel
+ * state, and with it you cannot tell "the previous result came back" from "the panel
+ * already had a price": in run #121 eleven L4 presses gave `toggle: price` and
+ * `toggle: idle`, and no proof of a recall was left. The epic acceptance requires
+ * ten cycles, so a cycle must be visible in the log.
  */
 export function describeToggle (before: Overlay, after: Overlay, now: number): string {
   if (after.mode === 'idle') {
     if (before.mode === 'idle') return 'nothing to hide'
-    // Скрытие во время поиска — отдельный случай приёмки: именно с него поздний
-    // ответ не имеет права поднять панель обратно. По голому `hidden` его от
-    // обычного скрытия не отличить (прогон #125).
+    // Hiding during a search is a separate acceptance case: exactly after it a late
+    // answer must not raise the panel back. By the bare `hidden` it cannot be told apart from
+    // a normal hide (run #125).
     return before.mode === 'checking' ? 'hidden during a search' : 'hidden'
   }
   const last = after.last
@@ -409,7 +409,7 @@ export function describeToggle (before: Overlay, after: Overlay, now: number): s
   return `restored ${name}: ${price}, age ${agoText(Math.max(0, now - last.at))}`
 }
 
-/** Строка журнала о том, что сейчас на панели. Для прогонов на железе. */
+/** A log line about what is on the panel now. For runs on hardware. */
 export function describe (overlay: Overlay): string {
   if (overlay.mode !== 'editor' || !overlay.editor) return overlay.mode
   const all = slots(overlay.editor.draft)
@@ -418,7 +418,7 @@ export function describe (overlay: Overlay): string {
   return `editor: ${where}, filters ${toStatFilters(overlay.editor.draft).length}`
 }
 
-/** Кадр текущего состояния. Нужен, когда кадр потерян — например, рендерер перезапущен. */
+/** The frame of the current state. Needed when the frame is lost, for example when the renderer restarted. */
 export function currentFrame (overlay: Overlay, layout?: EditorLayout): string[] {
   if (overlay.mode === 'editor' && overlay.item && overlay.editor) return view(overlay, layout).lines
   if (overlay.mode === 'price' && overlay.item && overlay.check) return priceFrame(overlay.item, overlay.check)

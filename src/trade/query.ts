@@ -1,41 +1,41 @@
-// От разобранного предмета к запросу. Здесь живёт развилка эпика.
+// From a parsed item to a query. The fork of the epic lives here.
 //
-// Заимствованного кода нет — только правила, взятые у донора идеей и названные
-// вслух. Донор: SnosMe/awakened-poe-trade (MIT), см. licenses/.
+// No borrowed code here — only rules, taken from the donor as ideas and named
+// out loud. Donor: SnosMe/awakened-poe-trade (MIT), see licenses/.
 //
-// ── Развилка ────────────────────────────────────────────────────────────────
+// ── The fork ────────────────────────────────────────────────────────────────
 //
-// У донора она называется `apiToSatisfySearch` (trade/common.ts:25-31) и звучит
-// так: есть включённые стат-фильтры → поиск по статам; нет → обмен, если у
-// предмета есть тег обмена. Мы берём её дословно, потому что в ней и записан
-// инвариант эпика: **отсутствие модов — не сбой, а вход в другую ветку**.
-// Валюта, ключ, карта, неопознанный предмет — у всех модов нет и не будет,
-// и цена у всех есть.
+// The donor calls it `apiToSatisfySearch` (trade/common.ts:25-31), and it says:
+// enabled stat filters exist → search by stats; none → exchange, if the item
+// has an exchange tag. We take it as is, because it holds the invariant of the
+// epic: **no mods is not a failure, it is the entry into another branch**.
+// Currency, a key, a map, an unidentified item — none of them have mods or ever
+// will, and all of them have a price.
 //
-// Разные ветки — это ещё и разные группы лимитов у GGG:
-//   поиск  → POST /api/trade/search + GET /api/trade/fetch   (SEARCH + FETCH)
-//   обмен  → POST /api/trade/exchange                        (EXCHANGE)
-// Поэтому развилка выбирается ДО запроса, а не по факту пустого ответа.
+// Different branches are also different GGG rate-limit groups:
+//   search   → POST /api/trade/search + GET /api/trade/fetch   (SEARCH + FETCH)
+//   exchange → POST /api/trade/exchange                        (EXCHANGE)
+// So the fork is chosen BEFORE the request, not from an empty response.
 //
-// ── Кто выбирает моды ───────────────────────────────────────────────────────
+// ── Who picks the mods ──────────────────────────────────────────────────────
 //
-// Умолчания донора (explicit тира ≤ 2, остальные типы целиком, порог ролла
-// минус 10%) живут в `./filters.ts` вместе с остальным списком модов: с редактором фильтров
-// их правит игрок, и второго правила в этом файле быть не должно. `statFilters`
-// ниже — те же умолчания, применённые без него.
+// The donor defaults (explicit of tier ≤ 2, other types in full, roll threshold
+// minus 10%) live in `./filters.ts` with the rest of the mod list: with the filter
+// editor the player changes them, and this file must not hold a second rule. `statFilters`
+// below is the same defaults, applied without the editor.
 //
-// Не перенесено от донора: псевдо-статы (суммарные сопротивления и т.п.),
-// карта категорий в trade-id. Всё это уточняет запрос, а не делает его возможным.
-// Свойства защиты и dps оружия перенесены — строками группы `properties`.
+// Not ported from the donor: pseudo stats (total resistances and similar), the
+// map of categories to trade ids. They refine the query, they do not make it possible.
+// Defence properties and weapon dps are ported — as rows of the `properties` group.
 
 import { defaultFilters, toStatFilters } from './filters'
 
-/** Карта ли это. Категория донора — `ItemCategory.Map` = `'Map'` (`parser/meta.ts:2`). */
+/** Is this a map. Donor category — `ItemCategory.Map` = `'Map'` (`parser/meta.ts:2`). */
 export function isMapItem (item: Pick<PricedItem, 'category' | 'mapTier'>): boolean {
   return item.category === 'Map' || item.mapTier != null
 }
 
-/** Кусок `ParsedItem` донора, которым пользуется построение запроса. */
+/** The part of the donor `ParsedItem` that query building uses. */
 export interface PricedItem {
   rarity?: string
   itemLevel?: number
@@ -44,36 +44,36 @@ export interface PricedItem {
   info: {
     name?: string
     refName: string
-    /** Тег обмена. Есть у валюты и осколков — по нему и уходим в ветку курса. */
+    /** Exchange tag. Currency and shards have it — it sends us to the rate branch. */
     tradeTag?: string
   }
   uniqueBase?: { refName: string }
-  /** Категория донора: `Map`, `Jewel`, `Flask`, … Нужна там, где форма запроса иная. */
+  /** Donor category: `Map`, `Jewel`, `Flask`, … Needed where the query has a different shape. */
   category?: string
-  /** Тир карты. Есть только у карт, и на трейде это отдельный фильтр. */
+  /** Map tier. Only maps have it, and on trade it is a separate filter. */
   mapTier?: number
-  /** Стак из подсказки предмета: «Stack Size: 20/5000». Есть у валюты и осколков. */
+  /** Stack from the item tooltip: "Stack Size: 20/5000". Currency and shards have it. */
   stackSize?: { value: number, max: number }
-  /** Свойства защиты — броня, уклонение, щит, вард, блок. Поля парсера донора. */
+  /** Defence properties — armour, evasion, shield, ward, block. Donor parser fields. */
   armourAR?: number
   armourEV?: number
   armourES?: number
   armourWARD?: number
   armourBLOCK?: number
-  /** Свойства оружия из буфера: атак в секунду, средний физ. и стихийный урон за удар. */
+  /** Weapon properties from the buffer: attacks per second, average physical and elemental damage per hit. */
   weaponAS?: number
   weaponPHYSICAL?: number
   weaponELEMENTAL?: number
-  /** Качество, %. Нужно, чтобы привести физ. урон к Q20, как считает трейд. */
+  /** Quality, %. Needed to bring physical damage to Q20, as trade computes it. */
   quality?: number
-  /** Буфер целиком, как его отдала игра. Из него берётся то, чего парсер донора не разбирает. */
+  /** The full buffer, as the game gave it. Source for what the donor parser does not parse. */
   rawText?: string
   statsByType: Array<{
     stat: {
       ref: string
       trade: { ids: Record<string, string[] | undefined>, option?: true }
     }
-    /** ModifierType донора: explicit | implicit | enchant | fractured | crafted | … */
+    /** Donor ModifierType: explicit | implicit | enchant | fractured | crafted | … */
     type: string
     sources: Array<{
       modifier: { info: { tier?: number } }
@@ -83,33 +83,33 @@ export interface PricedItem {
 }
 
 /**
- * Режим поиска — тот самый выпадающий список из четырёх пунктов на сайте трейда.
- * Замер 15.09 на Ambu's Charge в лиге Allflame показывает, насколько это разные
- * рынки, а не оттенки одного:
+ * Search mode — the same four-item dropdown as on the trade site.
+ * A measurement on 15.09 on Ambu's Charge in the Allflame league shows that these
+ * are different markets, not shades of one:
  *
- * | режим          | что значит                                   | объявлений |
+ * | mode           | meaning                                      | listings   |
  * |----------------|----------------------------------------------|------------|
- * | `securable`    | Instant Buyout: покупка через стеш, продавец не нужен | 2855 |
- * | `available`    | Instant Buyout и In Person (Online) вместе    | —          |
- * | `online`       | In Person (Online): сделка из рук в руки      | 66         |
- * | `onlineleague` | то же, но только в этой лиге                 | 65         |
- * | `any`          | всё подряд, включая офлайн                   | 5118       |
+ * | `securable`    | Instant Buyout: buy through the stash, no seller needed | 2855 |
+ * | `available`    | Instant Buyout and In Person (Online) together | —        |
+ * | `online`       | In Person (Online): a hand-to-hand trade     | 66         |
+ * | `onlineleague` | the same, but only in this league            | 65         |
+ * | `any`          | everything, offline included                 | 5118       |
  *
- * Значение по умолчанию — `securable`: цена, которую можно получить прямо
- * сейчас, не дожидаясь, пока продавец ответит в игре. На том же предмете
- * `online` давал медиану 10 chaos, а инстант-баяут — 1 chaos при 2855 лотах;
- * второе и есть рынок, первое — ценники тех, кто не продаёт.
+ * The default is `securable`: the price you can get right now, without
+ * waiting for a seller to answer in game. On the same item `online` gave
+ * a median of 10 chaos, and instant buyout gave 1 chaos with 2855 lots;
+ * the second is the market, the first is price tags of people who do not sell.
  *
- * `available` — донорский дефолт вне merchant-режима: оба рынка, где сделку
- * можно закрыть сейчас. Замер 04.10 (Headhunter, Allflame): 1977 = 1974
- * instant + 3 in person. Bulk-обмен его тоже принимает. Стоит вторым в круге,
- * сразу за умолчанием — это ближайший к нему более широкий рынок.
+ * `available` is the donor default outside merchant mode: both markets where
+ * a trade can close now. Measurement 04.10 (Headhunter, Allflame): 1977 = 1974
+ * instant + 3 in person. Bulk exchange accepts it too. It is second in the cycle,
+ * right after the default — it is the nearest wider market.
  */
 export const SEARCH_MODES = ['securable', 'available', 'online', 'onlineleague', 'any'] as const
 export type SearchMode = typeof SEARCH_MODES[number]
 export const DEFAULT_SEARCH_MODE: SearchMode = 'securable'
 
-/** Как режим называется на панели. Никаких кодов API перед глазами игрока. */
+/** How the mode is named on the panel. No API codes in front of the player. */
 export const MODE_LABEL: Record<SearchMode, string> = {
   securable: 'instant buyout',
   available: 'buyout or in person',
@@ -118,7 +118,7 @@ export const MODE_LABEL: Record<SearchMode, string> = {
   any: 'any, incl. offline'
 }
 
-/** Режим из строки — для переменной окружения. Мусор молча не проглатывается. */
+/** Mode from a string — for an environment variable. Garbage is not silently accepted. */
 export function parseSearchMode (value: string | undefined): SearchMode | undefined {
   if (!value) return undefined
   const found = SEARCH_MODES.find(mode => mode === value)
@@ -126,27 +126,27 @@ export function parseSearchMode (value: string | undefined): SearchMode | undefi
   return found
 }
 
-/** Следующий режим по кругу — одно действие в редакторе, без списка и меню. */
+/** The next mode in the cycle — one action in the editor, no list and no menu. */
 export function nextSearchMode (mode: SearchMode): SearchMode {
   return SEARCH_MODES[(SEARCH_MODES.indexOf(mode) + 1) % SEARCH_MODES.length]!
 }
 
 export interface StatEntryFilter {
   id: string
-  /** Обе границы — необязательные и независимые: игрок задаёт любую из них. */
+  /** Both bounds are optional and independent: the player sets either of them. */
   value?: { min?: number, max?: number, option?: number }
   /**
-   * Тот же мод под другими типами трейда. У справочника донора один мод часто
-   * имеет id и в `explicit`, и в `implicit`, и во `fractured` — например
-   * «Trigger Level 20 Death Aura when Equipped» у Ambu's Charge. Буфер говорит
-   * ОДИН тип, индекс трейда может держать его под другим, и фильтр по «своему»
-   * id не находит ничего (прогон #107: уникал с ценой 5 chaos по имени и ноль
-   * по включённому моду). Поэтому такой мод уходит группой «любой из этих id».
+   * The same mod under other trade types. In the donor reference one mod often
+   * has an id in `explicit`, in `implicit`, and in `fractured` — for example
+   * "Trigger Level 20 Death Aura when Equipped" on Ambu's Charge. The buffer gives
+   * ONE type, the trade index can hold the mod under another, and a filter by the
+   * "own" id finds nothing (run #107: a unique priced at 5 chaos by name and zero
+   * with the mod enabled). So such a mod goes as an "any of these ids" group.
    */
   alt?: string[]
 }
 
-/** Группа стат-фильтров запроса. `count` с `min: 1` — «любой из перечисленных». */
+/** A stat filter group of the query. `count` with `min: 1` means "any of the listed". */
 export interface StatGroup {
   type: 'and' | 'count'
   filters: Array<{ id: string, value?: StatEntryFilter['value'] }>
@@ -157,7 +157,7 @@ export interface SearchBody {
   query: {
     status: { option: SearchMode }
     name?: string
-    /** База. У карт это `{ option: 'Map', discriminator: 'map' }` — см. ниже. */
+    /** Base. For maps it is `{ option: 'Map', discriminator: 'map' }` — see below. */
     type?: string | { option: string, discriminator: string }
     stats: StatGroup[]
     filters: {
@@ -196,35 +196,36 @@ export interface ExchangeBody {
 }
 
 /**
- * Моды предмета, уходящие в фильтр поиска по умолчанию — то есть до того, как
- * игрок что-то поправил в редакторе. Пустой массив — законный ответ, а не
- * признак того, что что-то не удалось: у валюты, карты, ключа и неопознанного
- * предмета модов нет вовсе.
+ * Item mods that go into the search filter by default — that is, before the
+ * player changes anything in the editor. An empty array is a valid answer, not
+ * a sign that something failed: currency, a map, a key and an unidentified
+ * item have no mods at all.
  */
 export function statFilters (item: PricedItem): StatEntryFilter[] {
   return toStatFilters(defaultFilters(item))
 }
 
 /**
- * Сколько explicit-модов осталось за бортом фильтра по умолчанию. Не диагностика
- * ради диагностики: если у редкого предмета все моды ниже тира 2, запрос уходит
- * по одной базе, и найденная цена — это цена базы, а не этого предмета.
- * Молчать об этом нельзя, число уезжает в строку результата.
+ * How many explicit mods the default filter left out. Not diagnostics for its
+ * own sake: if all mods of a rare item are below tier 2, the query goes by the
+ * base only, and the found price is the price of the base, not of this item.
+ * This must not stay silent; the number goes into the result line.
  *
- * С редактором фильтров у числа появился второй смысл: столько строк редактора игрок может
- * включить руками. Строки видны все, включая недоступные, — `defaultFilters`.
+ * With the filter editor the number has a second meaning: this many editor rows the player
+ * can enable by hand. All rows are visible, including unavailable ones — `defaultFilters`.
  */
 export function skippedExplicits (item: PricedItem): number {
   return defaultFilters(item).filter(row => row.type === 'explicit' && row.id && !row.enabled).length
 }
 
 /**
- * Какой веткой идти за ценой. Правило донора: моды решают, тег обмена —
- * запасной путь, поиск по имени и базе — общий знаменатель.
+ * Which branch to take for the price. Donor rule: mods decide, the exchange tag
+ * is the fallback, search by name and base is the common denominator.
  *
- * `stats` — набор, выбранный игроком. Он влияет на развилку только в одну
- * сторону: включённый мод уводит в поиск. Обратного нет намеренно — выключив
- * все фильтры у редкого предмета, игрок просит цену базы, а не курс обмена.
+ * `stats` is the set the player chose. It affects the fork in one direction
+ * only: an enabled mod sends the item to search. The reverse is intentionally
+ * absent — when the player disables all filters on a rare item, the player asks
+ * for the price of the base, not an exchange rate.
  */
 export function pickFork (item: PricedItem, stats?: StatEntryFilter[]): 'search' | 'exchange' {
   if ((stats ?? []).length || statFilters(item).length) return 'search'
@@ -232,13 +233,13 @@ export function pickFork (item: PricedItem, stats?: StatEntryFilter[]): 'search'
 }
 
 /**
- * Поиск по статам, он же поиск по имени и базе, когда статов нет.
- * `type` — база предмета; у валюты, карт и дивинационных карт база и есть имя,
- * поэтому одна и та же строка работает для всех форм (у донора — `baseType`,
+ * Search by stats, which is also search by name and base when there are no stats.
+ * `type` is the item base; for currency, maps and divination cards the base is the
+ * name, so one string works for all shapes (donor: `baseType`,
  * `create-item-filters.ts:98-104`).
  *
- * `opts.stats` — набор, выбранный игроком в редакторе. Не задан — едут умолчания.
- * Пустой массив тоже набор: «искать по имени и базе, без стат-фильтров».
+ * `opts.stats` is the set the player chose in the editor. Not set — the defaults go.
+ * An empty array is also a set: "search by name and base, with no stat filters".
  */
 export function buildSearchQuery (
   item: PricedItem,
@@ -246,12 +247,12 @@ export function buildSearchQuery (
 ): SearchBody {
   const isUnique = item.rarity === 'Unique'
 
-  // У трейда `type` — это БАЗА, и имени уникала там быть не может. Пока база
-  // не распознана, поле не отправляется вовсе: правило донора — искать уникал
-  // именем и базой только когда база известна (`create-item-filters.ts:214`),
-  // иначе `name` и `type` совпали бы, и выдача была бы пустой всегда. Ровно на
-  // этом молча терялся Ambu's Charge в прогоне #101: десятки объявлений на
-  // трейде, ноль у нас.
+  // On trade `type` is the BASE, and the name of a unique cannot be there. While
+  // the base is not recognized, the field is not sent at all: the donor rule is to
+  // search a unique by name and base only when the base is known
+  // (`create-item-filters.ts:214`), otherwise `name` and `type` would match, and the
+  // result would always be empty. This is exactly how Ambu's Charge was silently
+  // lost in run #101: dozens of listings on trade, zero for us.
   const base = isUnique ? item.uniqueBase?.refName : (visceraBase(item) ?? item.info.refName)
   const isMap = isMapItem(item)
 
@@ -265,9 +266,9 @@ export function buildSearchQuery (
     sort: { price: 'asc' }
   }
 
-  // Свойства защиты, dps оружия и уровень предмета — не статы: на трейде у них свои поля запроса.
-  // Разделение делается здесь, потому что редактор показывает их одной таблицей
-  // с модами, а разными их делает только адрес в запросе.
+  // Defence properties, weapon dps and item level are not stats: trade has its own query fields for them.
+  // The split happens here, because the editor shows them in one table
+  // with the mods, and only the address in the query makes them different.
   const props: Record<PropertyGroup, Record<string, { min?: number, max?: number }>> = {
     armour_filters: {},
     weapon_filters: {},
@@ -284,29 +285,38 @@ export function buildSearchQuery (
     if (Object.keys(props[group]).length) body.query.filters[group] = { filters: props[group] }
   }
 
-  // Карта на трейде — не «Bone Crypt Map», а `Map` с дискриминатором. Замер на
-  // живом API (15.09, лига Allflame, T16):
+  // On trade a map is not "Bone Crypt Map", but `Map` with a discriminator. Measured on
+  // the live API (15.09, Allflame league, T16):
   //
-  //   type: { option: 'Map', discriminator: 'map' }  → 10000 объявлений
+  //   type: { option: 'Map', discriminator: 'map' }  → 10000 listings
   //   type: 'Bone Crypt Map'                         → 0
   //   type: 'Map'                                    → 0
   //
-  // Область карты трейд не индексирует вовсе: `name: 'Bone Crypt'` он отвергает
-  // как «Unknown item name». Карта опознаётся тиром и модами, а не тем, где она
-  // происходит. Прогон #115 слал `type: 'Map'` и получал ноль на каждой карте.
+  // Trade does not index the map area at all: it rejects `name: 'Bone Crypt'`
+  // as "Unknown item name". A map is identified by tier and mods, not by where it
+  // takes place. Run #115 sent `type: 'Map'` and got zero on every map.
   //
-  // Блайт-карта — та же `Map`, а не своя база. Буфер называет её
-  // `Blighted Map (Tier 14)`, и парсер отдаёт базу `Blighted Map`, но трейд такой
-  // базы не знает. Замер на живом API (09.11, лига Allflame, T14):
+  // A blight map is the same `Map`, not a base of its own. The buffer names it
+  // `Blighted Map (Tier 14)`, and the parser gives the base `Blighted Map`, but trade
+  // does not know such a base. Measured on the live API (09.11, Allflame league, T14):
   //
   //   type: 'Blighted Map'                                  → 0
-  //   type: { option: 'Blighted Map', discriminator: 'map' } → 4489 — все T14,
-  //                                                            блайт не учтён
+  //   type: { option: 'Blighted Map', discriminator: 'map' } → 4489 — all T14,
+  //                                                            blight ignored
   //   type: { option: 'Map', … } + map_blighted: true       → 414
   //
-  // До этой правки блайт-карта получала цену обычной карты того же тира.
+  // Before this fix a blight map got the price of an ordinary map of the same tier.
+  //
+  // The discriminator is only for the common base `Map` and its blight variants. A map
+  // with its own base is searched by that base: `Shaper Guardian Map` is a separate trade
+  // type with no tier in the name, the buffer names it the same way, and it has no tier.
+  // With `Map` and no tier the query searched any map of any tier. Measured on the live
+  // API (22.11, Covens league, query from the buffer of an unidentified map):
+  // `type: 'Shaper Guardian Map'` — 6569 listings, all Shaper Guardian Map, from 3 chaos
+  // against 2 chaos for an ordinary T16. Donor rule: the discriminator is set only when
+  // the base is `Map` (`create-item-filters.ts:175`).
   const blight = isMap ? mapBlight(item) : undefined
-  if (isMap) body.query.type = { option: 'Map', discriminator: 'map' }
+  if (isMap && (blight || !base || base === 'Map')) body.query.type = { option: 'Map', discriminator: 'map' }
   else if (base) body.query.type = base
   if (isUnique && item.info.name) body.query.name = item.info.name
 
@@ -314,20 +324,21 @@ export function buildSearchQuery (
     filters: { rarity: { option: isUnique ? 'unique' : 'nonunique' } }
   }
 
-  // Тир — главное, чем карта отличается от карты: T16 и T3 с одинаковыми модами
-  // это разные предметы и разные деньги (`map_filters`, донор — `pathofexile-trade.ts:382`).
+  // Tier is the main thing that makes one map different from another: T16 and T3 with
+  // the same mods are different items and different money (`map_filters`, donor —
+  // `pathofexile-trade.ts:382`).
   //
-  // Блайт — второй признак, и он работает в обе стороны, как у донора
-  // (`pathofexile-trade.ts:386-395`): обычная карта ищется с обоими флагами
-  // `false`, иначе в выдачу подмешиваются блайт-карты того же тира (09.11,
-  // Allflame, T3: 3825 без флагов, 3775 с ними).
+  // Blight is the second sign, and it works both ways, as in the donor
+  // (`pathofexile-trade.ts:386-395`): an ordinary map is searched with both flags
+  // `false`, otherwise blight maps of the same tier mix into the result (09.11,
+  // Allflame, T3: 3825 without the flags, 3775 with them).
   //
-  // Серия — всегда `current`. Это не догадка о предмете: парсер пина знает
-  // только нынешнюю запись `Map (Tier N)`, а карта старой серии (`Bone Crypt
-  // Map`) не распознаётся вовсе. Во временной лиге фильтр ничего не меняет, а в
-  // Standard без него в выдачу идут карты всех прошлых атласов: T3 — 10000
-  // объявлений без серии и 479 с `current` (замер 09.11). Донор этот фильтр не
-  // ставит; правило наше.
+  // Series is always `current`. This is not a guess about the item: the pinned parser
+  // knows only the current form `Map (Tier N)`, and a map of an old series (`Bone Crypt
+  // Map`) is not recognized at all. In a temporary league the filter changes nothing, and
+  // in Standard without it the result includes maps of all past atlases: T3 — 10000
+  // listings without the series and 479 with `current` (measured 09.11). The donor does
+  // not set this filter; the rule is ours.
   if (isMap) {
     const map: NonNullable<SearchBody['query']['filters']['map_filters']>['filters'] = {}
     if (item.mapTier != null) map.map_tier = { min: item.mapTier, max: item.mapTier }
@@ -337,20 +348,20 @@ export function buildSearchQuery (
     body.query.filters.map_filters = { filters: map }
   }
 
-  // Цены только в хаосах и дивайнах, и лоты одного аккаунта схлопнуты. Оба
-  // правила донорские (`pathofexile-trade.ts:283-291`) и оба про одно: выдача,
-  // смешавшая пять валют и десять лотов одного бота, медиану не считает.
+  // Prices only in chaos and divine, and lots of one account are collapsed. Both
+  // rules are from the donor (`pathofexile-trade.ts:283-291`) and both are about one
+  // thing: a result that mixes five currencies and ten lots of one bot gives no median.
   body.query.filters.trade_filters = {
     filters: { price: { option: 'chaos_divine' }, collapse: { option: 'true' } }
   }
 
-  // Порча и опознанность меняют цену в разы, а у предмета в руке они известны
-  // точно — значит это не догадка, а часть описания того, что мы держим.
+  // Corruption and identification change the price many times over, and for the item
+  // in hand they are known exactly — so this is not a guess, but part of what we hold.
   const misc: NonNullable<SearchBody['query']['filters']['misc_filters']>['filters'] = {}
   if (item.isCorrupted !== undefined) misc.corrupted = { option: String(item.isCorrupted) }
   if (item.isUnidentified) misc.identified = { option: 'false' }
-  // Уровень предмета приезжает из редактора строкой `properties`, а живёт в той
-  // же группе запроса, что порча и опознанность.
+  // Item level comes from the editor as a `properties` row, and lives in the same
+  // query group as corruption and identification.
   if (props.misc_filters.ilvl) misc.ilvl = props.misc_filters.ilvl
   if (Object.keys(misc).length) body.query.filters.misc_filters = { filters: misc }
 
@@ -358,12 +369,12 @@ export function buildSearchQuery (
 }
 
 /**
- * База Viscera (лига Covens, 3.30) — из буфера, а не из парсера. Парсер донора
- * называет любую Viscera одним именем `Viscera` и различает их частью тела
- * (`Head Viscera`, `Upper Limb Viscera`). Трейд такой базы не знает, а свои
- * базы у него есть: «Scorched Arm», «Coven Queen's Crown». Замер на живом API
- * (17.11, лига Covens): `type: 'Scorched Arm'` — 189 объявлений, и Lesser, и
- * Greater в одной выдаче. Поэтому имя из буфера берётся без приставки.
+ * Viscera base (Covens league, 3.30) — from the buffer, not from the parser. The donor
+ * parser gives every Viscera one name `Viscera` and tells them apart by body part
+ * (`Head Viscera`, `Upper Limb Viscera`). Trade does not know such a base, but it has
+ * its own bases: "Scorched Arm", "Coven Queen's Crown". Measured on the live API
+ * (17.11, Covens league): `type: 'Scorched Arm'` — 189 listings, Lesser and
+ * Greater in one result. So the name from the buffer is taken without the prefix.
  */
 export function visceraBase (item: PricedItem): string | undefined {
   if (item.info.refName !== 'Viscera' || !item.rawText) return undefined
@@ -373,9 +384,9 @@ export function visceraBase (item: PricedItem): string | undefined {
 }
 
 /**
- * Блайт-карта или нет. Признак — база из буфера: `Blighted Map (Tier 14)` парсер
- * отдаёт базой `Blighted Map`, `Blight-ravaged Map (Tier 16)` — `Blight-ravaged
- * Map` (обе есть в `items.ndjson` пина). Правило донора,
+ * Blight map or not. The sign is the base from the buffer: for `Blighted Map (Tier 14)`
+ * the parser gives the base `Blighted Map`, for `Blight-ravaged Map (Tier 16)` —
+ * `Blight-ravaged Map` (both are in the pinned `items.ndjson`). Donor rule,
  * `create-item-filters.ts:169-175`.
  */
 export function mapBlight (item: PricedItem): 'blighted' | 'ravaged' | undefined {
@@ -386,9 +397,9 @@ export function mapBlight (item: PricedItem): 'blighted' | 'ravaged' | undefined
 }
 
 /**
- * Свойство ли это предмета (защита, dps, уровень), а не мод. Нужно тем, кто
- * спрашивает «вошёл ли в фильтр хоть один мод»: включённый ilvl у предмета,
- * который ищется по базе, модом не является и цену базы ценой предмета не делает.
+ * Is this an item property (defence, dps, level), not a mod. Needed by code that
+ * asks "did at least one mod go into the filter": an enabled ilvl on an item that
+ * is searched by base is not a mod and does not turn the base price into the item price.
  */
 export function isPropertyFilter (id: string): boolean {
   return PROPERTY_FIELD[id] != null
@@ -397,9 +408,9 @@ export function isPropertyFilter (id: string): boolean {
 type PropertyGroup = 'armour_filters' | 'weapon_filters' | 'misc_filters'
 
 /**
- * Внутреннее имя свойства → группа и поле трейда. Имена слева взяты у донора
- * (`_INTERNAL_TRADE_IDS`, `filters/interfaces.ts:142-154`), справа — то, что
- * понимает API (`pathofexile-trade.ts:452-490`).
+ * Internal property name → trade group and field. Names on the left come from the donor
+ * (`_INTERNAL_TRADE_IDS`, `filters/interfaces.ts:142-154`), on the right is what
+ * the API understands (`pathofexile-trade.ts:452-490`).
  */
 const PROPERTY_FIELD: Record<string, { group: PropertyGroup, field: string } | undefined> = {
   'item.armour': { group: 'armour_filters', field: 'ar' },
@@ -414,10 +425,10 @@ const PROPERTY_FIELD: Record<string, { group: PropertyGroup, field: string } | u
 }
 
 /**
- * Фильтры → группы запроса. Мод с одним id живёт в общей группе `and`; мод,
- * который на трейде существует под несколькими типами, уходит отдельной группой
- * `count` с `min: 1` — «любой из этих id». Иначе выбор типа из буфера решал бы
- * судьбу поиска, а он у уникалов расходится с индексом трейда.
+ * Filters → query groups. A mod with one id lives in the common `and` group; a mod
+ * that exists on trade under several types goes as a separate `count` group
+ * with `min: 1` — "any of these ids". Otherwise the type from the buffer would decide
+ * the fate of the search, and for uniques it differs from the trade index.
  */
 export function statGroups (stats: StatEntryFilter[]): StatGroup[] {
   const and: StatGroup = { type: 'and', filters: [] }
@@ -441,12 +452,12 @@ export function statGroups (stats: StatEntryFilter[]): StatGroup[] {
 }
 
 /**
- * За что меняют — валюта считается курсом, а не листингами.
+ * What to exchange for — currency is priced by a rate, not by listings.
  *
- * Курс считаем в хаосах: одна валюта на все предметы даёт одно число, которое
- * можно сравнивать. Для самого Chaos Orb хаос бессмыслен — его меряем дивайном
- * (правило донора, `TradeBulk.vue:137-141`, там же и причина: на старте лиги
- * половина игроков выставляет курс наугад).
+ * We compute the rate in chaos: one currency for all items gives one number that
+ * can be compared. For Chaos Orb itself chaos makes no sense — we measure it in divine
+ * (donor rule, `TradeBulk.vue:137-141`, with the reason there too: at league start
+ * half of the players set a random rate).
  */
 export function buildExchangeQuery (
   item: PricedItem,

@@ -1,38 +1,38 @@
-// Таблица возможностей игры.
+// Table of game features.
 //
-// PoE2 объявлен следующей очередью (ADR 0001), поэтому различия между версиями
-// игры живут здесь, а не в `if (version === 2)` по всему коду: потребители
-// читают `features.foo` и про версию игры не знают. Приём взят у scalpel
-// идеей, не кодом — scalpel под AGPL-3.0, заимствовать оттуда нечего.
+// PoE2 is the declared next stage (ADR 0001), so the differences between game
+// versions live here, not in `if (version === 2)` across the code: consumers
+// read `features.foo` and do not know the game version. The technique comes from
+// scalpel as an idea, not as code: scalpel is AGPL-3.0, we borrow nothing from it.
 //
-// Второй столбец сейчас намеренно пуст: у донора PoE1 второй игры нет вовсе
-// (0 совпадений по `poe2` на 238 файлах), и заполнять таблицу под неё до
-// стадии PoE2 значило бы выдумывать. Нужна форма, а не содержимое.
+// The second column is empty on purpose: the PoE1 donor has no second game at all
+// (0 matches for `poe2` in 238 files), and to fill the table for it before the
+// PoE2 stage would be invention. We need the shape, not the content.
 
 export type GameVersion = 'poe1' | 'poe2'
 
 export interface GameFeatures {
   readonly version: GameVersion
   /**
-   * Каталог пина донора. Парсер и справочники-база `.ndjson` берутся отсюда
-   * одним коммитом — рассинхрон между ними и есть то, на чём падает `init()`.
+   * Directory of the donor pin. The parser and the base `.ndjson` reference data
+   * come from here at one commit: a mismatch between them is what makes `init()` fail.
    */
   readonly donorDir: string
   /**
-   * Каталог нашей дельты к справочникам пина: `<язык>/*.delta.ndjson`
-   * и `SOURCES.json`. Её пишет `tools/datagen/` из файлов игры, когда донор
-   * ещё не выпустил данные под новую лигу. Собранный результат — `<dataDir>/.public/`.
+   * Directory of our delta to the pinned reference data: `<language>/*.delta.ndjson`
+   * and `SOURCES.json`. `tools/datagen/` writes it from the game files when the donor
+   * has not released data for a new league yet. The built result is `<dataDir>/.public/`.
    */
   readonly dataDir: string
   /**
-   * Аккорд копирования предмета. Именно advanced item description: на обычном
-   * `Ctrl+C` парсер вернёт предмет молча без модов (ADR 0001, И2).
+   * Chord that copies an item. It must be the advanced item description: on a plain
+   * `Ctrl+C` the parser silently returns the item without mods (ADR 0001, I2).
    */
   readonly copyItemChord: string
   /**
-   * AppId игры в Steam. Его gamescope кладёт в `GAMESCOPE_FOCUSED_APP` на корне,
-   * и по нему демон отличает «игра на экране» от «интерфейс Steam» — то самое
-   * автогашение, без которого он повиснет поверх QAM (спайк по оверлею, эксп. 6).
+   * Steam AppId of the game. gamescope puts it in `GAMESCOPE_FOCUSED_APP` on the root,
+   * and the daemon uses it to tell "game on screen" from "Steam UI": the auto-hide
+   * without which it would hang over the QAM (overlay spike, exp. 6).
    */
   readonly steamAppId: number
 }
@@ -43,9 +43,9 @@ const TABLE: { readonly [V in GameVersion]?: GameFeatures } = {
     donorDir: 'vendor/awakened-poe-trade',
     dataDir: 'data/poe1',
     copyItemChord: 'Ctrl+Alt+C',
-    // Снято с живого Deck: путь конфигурации Steam Input содержит `.../238960/`,
-    // и тот же номер стоял в `GAMESCOPE_FOCUSED_APP` при запущенной PoE
-    // (спайк по оверлею, эксп. 4).
+    // Taken from a live Deck: the Steam Input config path contains `.../238960/`,
+    // and the same number was in `GAMESCOPE_FOCUSED_APP` while PoE was running
+    // (overlay spike, exp. 4).
     steamAppId: 238960
   }
 }

@@ -1,24 +1,24 @@
-// Что показывает панель — в командах шва ADR 0003 (`rect`, `text`, `show`).
+// What the panel shows, in the commands of the ADR 0003 seam (`rect`, `text`, `show`).
 //
-// Стык между прайс-чеком и рендерером. Ни X11, ни сети, ни парсера
-// здесь нет: на входе — что случилось, на выходе — строки для stdin gs-panel.
-// Поэтому вёрстка проверяется без Deck и без игры, обычным `bun test`.
+// The joint between the price check and the renderer. No X11, no network, no
+// parser here: the input is what happened, the output is lines for gs-panel stdin.
+// So the layout is tested without a Deck and without the game, with plain `bun test`.
 //
-// ГЛАВНОЕ ТРЕБОВАНИЕ ЭТОГО ФАЙЛА — не красота, а то, что **молчащая панель
-// неотличима от сломанной**. Нет сети, лимит API, предмет не опознан, цены на
-// трейде нет вовсе — у каждого исхода свой кадр со словами. Кадр «ничего не
-// показываем» бывает ровно один: `clearFrame`, и он означает «показывать сейчас
-// нечего», а не «что-то пошло не так».
+// THE MAIN REQUIREMENT OF THIS FILE is not looks. It is that **a silent panel
+// cannot be told apart from a broken one**. No network, API rate limit, item not
+// recognized, no price on trade at all: each outcome has its own frame with words.
+// There is exactly one "show nothing" frame: `clearFrame`. It means "there is
+// nothing to show now", not "something went wrong".
 //
-// Ограничения шва, которые видно прямо в коде:
+// Seam limits that are visible right in the code:
 //
-//  - **Координаты абсолютные**, «окна» у оверлея нет (ADR 0003, Решение 2).
-//  - **Ширину строки знает только рендерер.** Обратного канала нет, поэтому
-//    перенос либо считает он сам (`WRAP`), либо строка режется здесь на глаз.
-//  - **Только покрытие Noto Sans** (ADR 0003, Ф4): подмены шрифта у Xft нет,
-//    отсутствующий глиф уезжает на экран пустым квадратом. Отсюда `~` вместо
-//    `≈` и `...` вместо `…` — рендерер о таких символах кричит в stderr, но
-//    кричит уже на живом Deck, а не здесь.
+//  - **Coordinates are absolute**, the overlay has no "window" (ADR 0003, Decision 2).
+//  - **Only the renderer knows the line width.** There is no back channel, so
+//    either the renderer wraps (`WRAP`), or the line is cut here by estimate.
+//  - **Noto Sans coverage only** (ADR 0003, F4): Xft has no font fallback, a
+//    missing glyph goes to the screen as an empty box. Hence `~` instead of
+//    `≈` and `...` instead of `…`. The renderer reports such characters to stderr,
+//    but it does so on the live Deck, not here.
 
 import {
   BlockedHostError,
@@ -47,28 +47,29 @@ import { groupLabel, rollText, type ModFilter } from './trade/filters'
 import { MODE_LABEL, type PricedItem } from './trade/query'
 import type { PriceCheck } from './price-check'
 
-// ── геометрия и палитра ──────────────────────────────────────────────────────
+// ── geometry and palette ─────────────────────────────────────────────────────
 //
-// Место слева выбрано не по вкусу: инвентарь и подсказка предмета в PoE живут
-// справа, и панель обязана не закрывать то, что прайс-чекают. Прогон #69
-// показал, что на экране стеша это тоже верно не всегда — окончательное место
-// выбирается на живом Deck, и правится оно здесь, а не в рендерере.
+// The left position is not a matter of taste: in PoE the inventory and the item
+// tooltip live on the right, and the panel must not cover what is being priced.
+// Run #69 showed that on the stash screen this is not always true either. The
+// final position is chosen on the live Deck, and it is changed here, not in the renderer.
 
-/** Место и ширина панели. Меняется здесь, не в рендерере (ADR 0003, Решение 2). */
+/** Panel position and width. Change it here, not in the renderer (ADR 0003, Decision 2). */
 export interface Box { x: number, y: number, w: number }
 
-// Ширина выбрана по строке мода, а не по вкусу: «+29% to Lightning Resistance»
-// с границами не влезал в 460 px и уезжал в «...» (прогон #101). Экран 1280,
-// панель слева — места хватает, а обрезанный мод нельзя ни прочитать, ни выбрать.
+// The width comes from a mod line, not from taste: "+29% to Lightning Resistance"
+// with bounds did not fit in 460 px and went to "..." (run #101). The screen is
+// 1280 wide and the panel is on the left, so there is room, and a cut mod can be
+// neither read nor selected.
 const BOX: Box = { x: 40, y: 90, w: 640 }
 const PAD = 20
-// Просвет между строками. Был 10 — и список Ambu's Charge (свойство, шесть
-// модов, три заголовка групп, два переноса) переставал влезать в экран: моды
-// выпадали в «ниже ещё N» прямо во время правки, что на Deck читается как
-// «моды пропали» (жалоба тестера по прогону #109). 6 px возвращают четыре строки
-// и заодно делают панель плотнее.
+// Gap between lines. It was 10, and the Ambu's Charge list (a property, six
+// mods, three group headers, two wraps) stopped fitting on the screen: mods
+// fell into "N more below" during editing, which on the Deck reads as
+// "the mods disappeared" (tester complaint after run #109). 6 px gives back four
+// lines and also makes the panel denser.
 const GAP = 6
-/** Высота вывода Deck. Окно оверлея всегда на весь экран (ADR 0003, Ф2). */
+/** Deck output height. The overlay window is always full screen (ADR 0003, F2). */
 const SCREEN_H = 800
 
 const BG = '0F1216E6'
@@ -81,10 +82,10 @@ const ERROR = 'E5786DFF'
 const RULE = '3A3F46FF'
 
 /**
- * Строка кадра: либо текст, либо разделитель. У текста есть метка курсора —
- * полоска слева. Она рисуется `rect`, а не символом: выбранная строка на 7"
- * экране должна быть видна раньше, чем прочитана, а лишний глиф в начале строки
- * съедает ширину и сдвигает текст относительно соседей (`fit` режет пробелы).
+ * A frame row: either text or a divider. Text has a cursor mark: a bar on
+ * the left. It is drawn with `rect`, not with a character: the selected line on
+ * a 7" screen must be seen before it is read, and an extra glyph at the start of
+ * the line eats width and shifts the text against its neighbors (`fit` trims spaces).
  */
 type Row =
   | { kind: 'text', text: string, px: number, color: string, marked?: boolean, cells?: string[], stops?: number[] }
@@ -93,25 +94,25 @@ type Row =
 const text = (text: string, px: number, color: string, marked = false): Row =>
   ({ kind: 'text', text, px, color, marked })
 /**
- * Строка из колонок равной ширины: каждая надпись стоит в начале своей колонки.
- * Нужна там, где у строки несколько зон наведения: надпись обязана лежать над
- * своей зоной. `confirm · cancel` одной надписью занимал левую треть панели, а
- * зона `cancel` — правую половину, и наведение на слово `cancel` подсвечивало
- * `confirm` (прогон #133).
+ * A row of equal-width columns: each label starts at the start of its column.
+ * It is needed where a row has several hover zones: a label must lie over
+ * its zone. `confirm · cancel` as one label took the left third of the panel, but
+ * the `cancel` zone was the right half, and hovering the word `cancel` highlighted
+ * `confirm` (run #133).
  */
 const columns = (cells: string[], px: number, color: string, marked = false, stops?: number[]): Row =>
   ({ kind: 'text', text: cells.join(' '), px, color, marked, cells, stops })
 const rule = (): Row => ({ kind: 'rule' })
 
 /**
- * Левые края колонок долями ширины строки. Без `stops` колонки равные. Одна
- * формула и для надписи, и для зоны: стоит им посчитаться врозь, и палец
- * наводится не на то, что видит (прогоны #133 и #150).
+ * Left column edges as fractions of the row width. Without `stops` the columns
+ * are equal. One formula for both the label and the zone: if they are computed
+ * apart, the finger points at something other than what it sees (runs #133 and #150).
  */
 const edges = (parts: number, stops?: number[]): number[] =>
   stops ?? Array.from({ length: parts }, (_, part) => part / parts)
 
-/** Левый край и ширина колонки `part`. */
+/** Left edge and width of column `part`. */
 const columnSpan = (box: Box, part: number, parts: number, stops?: number[]): { x: number, w: number } => {
   const inner = box.w - PAD * 2
   const at = edges(parts, stops)
@@ -121,33 +122,33 @@ const columnSpan = (box: Box, part: number, parts: number, stops?: number[]): { 
 }
 
 /**
- * Высота строки под кегль. Замер ADR 0003: Noto Sans даёт 31 px при кегле 22,
- * то есть ~1.41 — берём с небольшим запасом, чтобы соседние строки не слипались.
+ * Line height for a font size. ADR 0003 measurement: Noto Sans gives 31 px at
+ * size 22, that is ~1.41. We take a small margin so that adjacent lines do not stick.
  */
 const lineHeight = (px: number): number => Math.round(px * 1.45)
 
 /**
- * Обрезка по прикидке ширины символа.
+ * Cut by an estimated character width.
  *
- * ponytail: настоящую ширину знает только тот, у кого открыт шрифт, а шов
- * однонаправленный (ADR 0003, Решение 2) — метрики оттуда не спросить. Отсюда
- * коэффициент 0.52 средней ширины Noto Sans, снятый с эталонного кадра. Потолок
- * очевиден: строка из одних `W` вылезет, из одних `i` — обрежется рано. Если
- * это начнёт мешать, следующая ступень — не подбор коэффициента, а команда
- * `text` с `WRAP` и расчёт высоты панели рендерером, то есть двусторонний шов.
+ * ponytail: only the side that has the font open knows the real width, and the
+ * seam is one-way (ADR 0003, Decision 2), so we cannot ask it for metrics. Hence
+ * the factor 0.52 of the mean Noto Sans width, taken from the reference frame. The
+ * ceiling is clear: a line of only `W` overflows, a line of only `i` is cut early. If
+ * this starts to hurt, the next step is not a better factor but a `text` command
+ * with `WRAP` and the panel height computed by the renderer, that is a two-way seam.
  */
 export function fit (line: string, px: number, width = BOX.w - PAD * 2): string {
   const max = Math.max(4, Math.floor(width / (px * 0.52)))
-  const flat = line.replace(/\s+/g, ' ').trim() // перевод строки разорвал бы команду шва
+  const flat = line.replace(/\s+/g, ' ').trim() // a line break would split the seam command
   return flat.length <= max ? flat : `${flat.slice(0, max - 3).trimEnd()}...`
 }
 
-/** Сколько символов кегля `px` влезает в строку панели шириной `w`. */
+/** How many characters of size `px` fit in a panel line of width `w`. */
 function charBudget (px: number, w: number): number {
   return Math.max(4, Math.floor((w - PAD * 2) / (px * 0.52)))
 }
 
-/** Высота содержимого без внешних отступов — по ней растёт подложка. */
+/** Content height without outer padding. The backing grows by it. */
 function heightOf (rows: Row[]): number {
   return rows.reduce(
     (sum, row) => sum + (row.kind === 'rule' ? GAP * 2 + 1 : lineHeight(row.px) + GAP),
@@ -156,27 +157,27 @@ function heightOf (rows: Row[]): number {
 }
 
 /**
- * Строки → кадр: подложка по высоте содержимого, акцентная полоса, текст, `show`.
+ * Rows to a frame: backing by content height, accent bar, text, `show`.
  *
- * Метки курсора уходят в кадр ДО текста и вместе с подложкой. Порядок не
- * косметический: проверка `experiments/deck-ux/check-linux.sh` считает границей
- * вертикального слота строки следующий за ней `rect`, и метка, вставленная между
- * строками, объявила бы слот нулевой высоты.
+ * Cursor marks go into the frame BEFORE the text, together with the backing. The
+ * order is not cosmetic: the check `experiments/deck-ux/check-linux.sh` takes the
+ * next `rect` after a line as the bottom of its vertical slot, and a mark inserted
+ * between lines would declare a slot of zero height.
  */
 export function frame (rows: Row[], box: Box = BOX): string[] {
   return laidOutFrame(rows, box).lines
 }
 
-/** Где на экране лежит строка кадра. Нужно тому, кто наводит на неё курсор. */
+/** Where a frame row lies on the screen. Needed by whoever points the cursor at it. */
 export interface RowSpan { y: number, height: number }
 
 /**
- * Кадр вместе с координатами своих строк.
+ * A frame together with the coordinates of its rows.
  *
- * Отдельная функция, а не второй расчёт геометрии рядом: попадание курсора в
- * строку обязано считаться по тем же числам, по которым строка нарисована.
- * Две формулы одного и того же разъезжаются молча — на экране это выглядит как
- * «палец наводит на соседнюю строку».
+ * A separate function, not a second geometry calculation next to it: a cursor hit
+ * on a row must be computed from the same numbers the row is drawn with.
+ * Two formulas for the same thing drift apart silently, and on the screen this looks
+ * like "the finger points at the next row".
  */
 export function laidOutFrame (
   rows: Row[],
@@ -200,15 +201,15 @@ export function laidOutFrame (
       continue
     }
     if (row.marked) head.push(`rect ${box.x + 8} ${y} 4 ${lineHeight(row.px)} ${ACCENT}`)
-    // WRAP=0: переносов нет намеренно — иначе высота подложки перестала бы
-    // считаться здесь, а посчитать её больше некому.
+    // WRAP=0: no wrapping on purpose. Otherwise the backing height would stop
+    // being computed here, and nobody else can compute it.
     const cells = row.cells ?? [row.text]
     cells.forEach((cell, part) => {
       const { x, w } = columnSpan(box, part, cells.length, row.stops)
       out.push(`text ${x} ${y} 0 ${row.color} ${row.px} ${fit(cell, row.px, w)}`)
     })
-    // Зона строки на полшага шире самой строки: промежуток между строками
-    // отдаётся ближайшей, иначе курсор проваливается «между» и выбор мигает.
+    // The row zone is half a step wider than the row itself: the gap between rows
+    // goes to the nearest one, otherwise the cursor falls "between" and the selection flickers.
     spans.push({ y: y - GAP / 2, height: lineHeight(row.px) + GAP })
     y += lineHeight(row.px) + GAP
   }
@@ -216,14 +217,14 @@ export function laidOutFrame (
   return { lines: [...head, ...out, 'show'], spans, height }
 }
 
-/** Пустой кадр: панели на экране нет. Единственный законный способ промолчать. */
+/** Empty frame: no panel on the screen. The only legal way to stay silent. */
 export function clearFrame (): string[] {
   return ['show']
 }
 
-// ── что именно показываем ────────────────────────────────────────────────────
+// ── what exactly we show ─────────────────────────────────────────────────────
 
-/** Имя предмета для заголовка. Уникалу нужны оба имени, остальным хватает базы. */
+/** Item name for the title. A unique needs both names, the rest only need the base. */
 export function itemTitle (item: PricedItem): string {
   return item.info.name ?? item.info.refName
 }
@@ -232,8 +233,8 @@ function itemSubtitle (item: PricedItem): string {
   const parts: string[] = []
   if (item.info.name && item.info.name !== item.info.refName) parts.push(item.info.refName)
   if (item.rarity) parts.push(item.rarity)
-  // Тир у карты — то, по чему она ищется (`map_tier`), и игрок должен видеть его
-  // на панели: без него цена T14 и T16 выглядит одной ценой (тестер).
+  // The map tier is what the map is searched by (`map_tier`), and the player must
+  // see it on the panel: without it the T14 and T16 prices look like one price (tester).
   if (item.mapTier != null) parts.push(`T${item.mapTier}`)
   if (item.itemLevel) parts.push(`ilvl ${item.itemLevel}`)
   if (item.isCorrupted) parts.push('corrupted')
@@ -242,9 +243,9 @@ function itemSubtitle (item: PricedItem): string {
 }
 
 /**
- * Кадр ожидания. Между нажатием и ценой проходит секунда-другая: сначала игра
- * дописывает буфер, потом отвечает трейд. Без этого кадра всё это время панель
- * пуста, и вещь выглядит сломанной ровно тогда, когда она работает.
+ * Waiting frame. A second or two passes between the press and the price: first the
+ * game finishes the clipboard, then trade answers. Without this frame the panel is
+ * empty all that time, and the tool looks broken exactly when it works.
  */
 export function checkingFrame (item: PricedItem): string[] {
   return frame([
@@ -256,8 +257,8 @@ export function checkingFrame (item: PricedItem): string[] {
 }
 
 /**
- * Сколько времени прошло, человеческими словами. Нужно ровно одному кадру —
- * возвращённому результату: «5 chaos» без возраста это обещание, а не замер.
+ * How much time has passed, in human words. Exactly one frame needs it: the
+ * recalled result. "5 chaos" without an age is a promise, not a measurement.
  */
 export function agoText (ms: number): string {
   if (ms < 60_000) return 'just now'
@@ -268,11 +269,12 @@ export function agoText (ms: number): string {
 }
 
 /**
- * Кадр «показывать нечего». Жест возврата нажат, а результата за сессию ещё не
- * было: показать чужую или выдуманную цену нельзя, промолчать — тоже (иначе
- * жест неотличим от сломанного: на приёмке демо восемь нажатий L4 подряд
- * ничего не дали, и кнопку сочли сломанной). Кнопка — та же `PRICE_BUTTON`,
- * что в кадре ready, чтобы подсказка не разошлась с раскладкой.
+ * The "nothing to show" frame. The recall gesture is pressed, but there was no
+ * result in this session yet: we cannot show a foreign or made-up price, and we
+ * cannot stay silent either (otherwise the gesture looks broken: at the demo
+ * acceptance eight L4 presses in a row gave nothing, and the button was judged
+ * broken). The button is the same `PRICE_BUTTON` as in the ready frame, so that
+ * the hint does not drift from the layout.
  */
 export function noResultFrame (): string[] {
   return frame([
@@ -281,31 +283,31 @@ export function noResultFrame (): string[] {
 }
 
 /**
- * Какая цена на панели главная, крупным числом. Одно место на весь проект.
+ * Which price is the main one on the panel, as the big number. One place for the whole project.
  *
- * `trade` — лучший курс instant buyout трейда: его можно исполнить с рук сейчас.
- * `faustus` — курс внутриигрового Currency Exchange по poe.ninja: трейд его не
- * видит, и у дешёвой валюты он расходится с трейдом в разы (Orb of Scouring в
- * Covens: стак 30 — 10 chaos на трейде против ~23 у Faustus). Вторая цена в
- * обоих случаях остаётся на панели строкой ниже. Курса Faustus нет — главной
- * становится цена трейда при любом значении.
+ * `trade` is the best instant buyout rate on trade: it can be done by hand now.
+ * `faustus` is the in-game Currency Exchange rate from poe.ninja: trade does not
+ * see it, and for cheap currency it differs from trade many times (Orb of Scouring in
+ * Covens: a stack of 30 is 10 chaos on trade against ~23 at Faustus). In both cases
+ * the second price stays on the panel one line below. If there is no Faustus rate,
+ * the trade price becomes the main one for any setting.
  *
- * Умолчание — `faustus`: у валюты игрок меняет у NPC, и цена, которую он видит
- * в игре, — курс Faustus (решение по приёмке).
+ * The default is `faustus`: the player trades currency at the NPC, and the price
+ * seen in the game is the Faustus rate (acceptance decision).
  */
 export type MainPrice = 'trade' | 'faustus'
 export const MAIN_PRICE: MainPrice = 'faustus'
 
 /**
- * Крупное число и строка курса под ним. Валюту и осколки продают стаком:
- * крупно — цена всего стака, ниже — курс одной штуки (замечание приёмки:
- * «стак 20 хаосов — 1 дивайн»).
+ * The big number and the rate line under it. Currency and shards are sold as a stack:
+ * big is the price of the whole stack, below it is the rate of one unit (acceptance
+ * remark: "a stack of 20 chaos is 1 divine").
  */
 function amountRows (rate: Rate, isExchange: boolean, stack: number | undefined): Row[] {
   const whole = stackPrice(rate, stack)
-  // Курс стоит своей строкой — в крупной только число, иначе «(9.15 per 1 divine)»
-  // от цены стака обрезается и ничего не значит.
-  // Одна штука дороже единицы — курс и есть крупное число, строка курса его бы повторила.
+  // The rate has its own line. The big line has only the number, otherwise
+  // "(9.15 per 1 divine)" after the stack price gets cut and means nothing.
+  // If one unit costs more than one, the rate is the big number, and a rate line would repeat it.
   const rated = whole ?? (isExchange && rate.amount < 1 ? rate : undefined)
   const rows = [text(`~ ${rated ? priceValueText(whole ?? rate) : priceAmountText(rate)}`, 34, VALUE)]
   if (rated) {
@@ -315,20 +317,20 @@ function amountRows (rate: Rate, isExchange: boolean, stack: number | undefined)
   return rows
 }
 
-/** Курс Faustus второй строкой, когда главная — цена трейда. */
+/** The Faustus rate as the second line, when the main price is the trade price. */
 function faustusRow (reference: ExchangeReference, stack: number | undefined): Row {
   const whole = stackPrice(reference, stack)
   return text(`Faustus: ${whole ? `~ ${priceValueText(whole)} · ` : ''}${rateText(reference)}`, 22, VALUE)
 }
 
 /**
- * Кадр цены. Он же кадр «цены нет» — это ответ трейда, а не сбой.
+ * Price frame. It is also the "no price" frame: that is an answer from trade, not a failure.
  *
- * `previousMs` — возраст результата, когда его вернули жестом. Возвращённая
- * цена обязана выглядеть иначе, чем свежая: она про тот же предмет и тот же
- * набор фильтров, но рынок с тех пор мог уехать.
+ * `previousMs` is the age of the result when it was recalled with the gesture. A
+ * recalled price must look different from a fresh one: it is about the same item and
+ * the same filter set, but the market may have moved since then.
  *
- * `main` — какая цена крупная, по умолчанию `MAIN_PRICE`.
+ * `main` is which price is big, by default `MAIN_PRICE`.
  */
 export function priceFrame (item: PricedItem, check: PriceCheck, previousMs?: number, main: MainPrice = MAIN_PRICE): string[] {
   const rows: Row[] = [
@@ -342,7 +344,7 @@ export function priceFrame (item: PricedItem, check: PriceCheck, previousMs?: nu
 
   const stack = item.stackSize?.value
   if (main === 'faustus' && check.reference) {
-    // Главная — курс Faustus: крупно он, цена трейда — строкой ниже.
+    // The main price is the Faustus rate: it is big, the trade price is one line below.
     rows.push(...amountRows(check.reference, true, stack))
     rows.push(text(`Faustus exchange (poe.ninja), ${check.league}`, 18, NOTE))
     rows.push(check.price
@@ -351,14 +353,14 @@ export function priceFrame (item: PricedItem, check: PriceCheck, previousMs?: nu
   } else if (check.price) {
     rows.push(...amountRows(check.price, check.price.kind === 'exchange', stack))
     rows.push(text(`${priceScopeText(check.price)}, ${check.league}`, 18, NOTE))
-    // Разброс: где рынок стоит и насколько он широк. Одно число не отличает
-    // рынок «5,5,6,6,7» от рынка «1,1,40,40,80», а решение продавать это меняет.
-    // У обмена разброса нет: цена — лучший курс, а хвост выдачи — завышенные лоты.
+    // Spread: where the market stands and how wide it is. One number does not tell
+    // the market "5,5,6,6,7" from the market "1,1,40,40,80", and that changes the decision to sell.
+    // Exchange has no spread: the price is the best rate, and the tail of the results is overpriced lots.
     const spread = check.price.kind === 'exchange' ? '' : priceSpreadText(check.price)
     if (spread) rows.push(text(spread, 18, MUTED))
-    // Четыре лота на весь трейд — это цена четырёх конкретных предметов, а не
-    // предмета: на прогоне #113 Cane of Kulemak с четырьмя включёнными модами
-    // дал 37.5 divine из четырёх лотов при рыночных 6–10.
+    // Four lots on all of trade is the price of four specific items, not of
+    // the item: in run #113 Cane of Kulemak with four enabled mods
+    // gave 37.5 divine from four lots while the market was 6–10.
     if (check.price.total < NARROW_SAMPLE) {
       rows.push(text(`only ${check.price.total} listings — the filter is narrow`, 18, WARN))
     }
@@ -369,15 +371,15 @@ export function priceFrame (item: PricedItem, check: PriceCheck, previousMs?: nu
     if (check.reference) rows.push(faustusRow(check.reference, stack))
   }
 
-  // Оговорки. Молчать о них нельзя: пустой фильтр при пяти модах — это цена
-  // базы, и показывать её как цену предмета значит показать чужое число.
+  // Caveats. We must not stay silent about them: an empty filter with five mods is
+  // the price of the base, and showing it as the item price means showing a foreign number.
   if (check.fellBackToSearch) {
     rows.push(text('no exchange rate — price from listings', 18, WARN))
   }
-  // Режим поиска — часть ответа, а не настройка где-то в стороне: инстант-баяут
-  // и сделка из рук в руки на одном предмете отличаются в разы (замер 15.09,
-  // Ambu's Charge: 1 chaos против 10). Заказанный режим пуст — говорим, каким
-  // рынком отвечаем вместо него.
+  // The search mode is part of the answer, not a setting somewhere aside: instant
+  // buyout and a hand-to-hand trade on one item differ many times (measured 15.09,
+  // Ambu's Charge: 1 chaos against 10). If the requested mode is empty, we say which
+  // market answers instead.
   rows.push(text(
     check.fellBackToMode
       ? `nothing in the chosen mode — showing ${MODE_LABEL[check.mode]}`
@@ -385,8 +387,8 @@ export function priceFrame (item: PricedItem, check: PriceCheck, previousMs?: nu
     18,
     check.fellBackToMode ? WARN : MUTED
   ))
-  // Набор игрока сказан вместо автоматической оговорки: «6 модов вне фильтра»
-  // после ручной правки означало бы не то, что игрок сделал.
+  // The set of the player is stated instead of the automatic caveat: "6 mods outside
+  // the filter" after a manual edit would not mean what the player did.
   if (check.manualStats) {
     rows.push(text(
       check.manualStats.length
@@ -395,9 +397,9 @@ export function priceFrame (item: PricedItem, check: PriceCheck, previousMs?: nu
       18,
       check.manualStats.length ? NOTE : WARN
     ))
-    // Пустая выдача при выбранных фильтрах читается как «поиск не работает»
-    // (прогон #101). Это не поломка, а слишком узкий набор — и сказать об этом
-    // должна панель, а не журнал, которого игрок не видит.
+    // Empty results with selected filters read as "search does not work"
+    // (run #101). It is not a fault but a set that is too narrow, and the panel
+    // must say so, not the log that the player does not see.
     if (!check.price && check.manualStats.length) {
       rows.push(text('filters narrowed it to nothing — drop some and confirm again', 18, WARN))
     }
@@ -408,49 +410,49 @@ export function priceFrame (item: PricedItem, check: PriceCheck, previousMs?: nu
   return frame(rows)
 }
 
-// ── редактор фильтров ────────────────────────────────────────────────────────
+// ── filter editor ────────────────────────────────────────────────────────────
 //
-// Список модов длиннее экрана по определению: у редкого предмета их
-// шесть-восемь, у каждого числового мода три слота курсора, а панель не имеет
-// права закрыть игру целиком. Поэтому список едет окном вокруг курсора, а то,
-// что за окном, названо числом, а не молча обрезано — «доступен целиком с
-// геймпада» из приёмки эпика иначе не проверить.
+// The mod list is longer than the screen by definition: a rare item has
+// six to eight, each numeric mod has three cursor slots, and the panel has no
+// right to cover the whole game. So the list moves as a window around the cursor, and
+// what is outside the window is named by a number, not cut silently. Otherwise the
+// epic acceptance item "fully reachable from the gamepad" cannot be checked.
 
-/** Место панели редактора и кегли. Окончательные выбираются на живом Deck. */
+/** Editor panel position and font sizes. The final ones are chosen on the live Deck. */
 export interface EditorLayout extends Box { title: number, body: number }
 export const EDITOR_LAYOUT: EditorLayout = { ...BOX, title: 22, body: 18 }
 
 const boundText = (value?: number): string => value == null ? '-' : rollText(value)
 
-/** Выбранное значение в скобках, правимое — в угловых. Только ASCII (ADR 0003, Ф4). */
+/** The selected value in square brackets, the edited one in angle brackets. ASCII only (ADR 0003, F4). */
 const focusMark = (value: string, focused: boolean, editing: boolean): string =>
   focused ? (editing ? `<${value}>` : `[${value}]`) : value
 
 /**
- * Строка списка: слева состояние и мод, справа границы или причина недоступности.
+ * A list line: state and mod on the left, bounds or the reason it is unavailable on the right.
  *
- * Название, не влезающее в строку, переносится на вторую, а не режется: «Trigger
- * Level 20 Death Au...» нельзя ни прочитать, ни сверить с описанием в игре
- * (претензия тестера после прогонов #101 и #107 — «текст модов всё ещё не
- * помещается»). Вторая строка идёт с отступом под название и без хвоста: флажок
- * и границы уже сказаны в первой.
+ * A name that does not fit in the line wraps to a second one and is not cut: "Trigger
+ * Level 20 Death Au..." can be neither read nor compared with the description in the game
+ * (tester complaint after runs #101 and #107: "the mod text still does not
+ * fit"). The second line is indented under the name and has no tail: the checkbox
+ * and the bounds are already in the first one.
  */
 function listLines (px: number, width: number, head: string, label: string, tail: string, labelW = width): string[] {
   const room = charBudget(px, labelW) - head.length - tail.length - 2
   if (label.length <= room) return [`${head} ${label} ${tail}`.trim()]
 
-  // Переносим по словам — разрыв посреди слова читается хуже, чем короткая строка.
+  // Wrap by words: a break in the middle of a word reads worse than a short line.
   const words = label.split(' ')
   let first = ''
   while (words.length && `${first} ${words[0]!}`.trim().length <= room) {
     first = `${first} ${words.shift()!}`.trim()
   }
-  if (!first) first = label.slice(0, room) // одно слово длиннее строки — редкость, но не падаем
+  if (!first) first = label.slice(0, room) // one word longer than the line is rare, but we do not crash
 
-  // Отступом продолжение не пометить: `fit` схлопывает пробелы (перевод строки
-  // разорвал бы команду шва), поэтому ведущий пробел до экрана не доедет.
-  // Точка — тот же символ, что уже разделяет части заголовка, и она сразу
-  // говорит, что строка не начинает новый мод.
+  // An indent cannot mark the continuation: `fit` collapses spaces (a line break
+  // would split the seam command), so a leading space never reaches the screen.
+  // The dot is the same character that already separates the title parts, and it
+  // says at once that the line does not start a new mod.
   const mark = '· '
   const restRoom = charBudget(px, width) - mark.length
   const rest = words.join(' ') || label.slice(first.length).trim()
@@ -459,11 +461,11 @@ function listLines (px: number, width: number, head: string, label: string, tail
 }
 
 /**
- * Колонки строки мода с диапазоном: название, min, max, `=`. Колонки границ
- * узкие и стоят у правого края всегда, а не сразу за названием: зона наведения
- * обязана лежать под своей надписью. Прежде зоны были четвертями строки, а
- * `2+ =` шли за названием — у короткого мода над зоной `=` было пусто, а
- * min и max попадали на название (прогон #150). Ширина — под `<12.5>` и `[=]`.
+ * Columns of a mod line with a range: name, min, max, `=`. The bound columns are
+ * narrow and always stand at the right edge, not right after the name: a hover zone
+ * must lie under its label. Before, the zones were quarters of the line, and
+ * `2+ =` came after the name: for a short mod there was nothing over the `=` zone, and
+ * min and max fell on the name (run #150). The width fits `<12.5>` and `[=]`.
  */
 const BOUND_CHARS = 8
 const EXACT_CHARS = 4
@@ -482,8 +484,8 @@ function modLines (
 ): { lines: string[], controls?: string[] } {
   const box = row.unavailable ? '[-]' : row.enabled ? '[x]' : '[ ]'
   if (row.kind === 'range' && !row.unavailable) {
-    // Подпись пустой границы видна всегда, а не только под курсором: надпись,
-    // которая появляется при наведении, перекладывает строку, и она моргает.
+    // The label of an empty bound is always visible, not only under the cursor: a label
+    // that appears on hover shifts the line, and the line blinks.
     const bound = (value: number | undefined, name: 'min' | 'max'): string =>
       focusMark(value == null ? name : rollText(value), focus.field === name, focus.editing)
     const labelW = Math.round((width - PAD * 2) * modStops(px, width)[1]!) + PAD * 2
@@ -496,20 +498,20 @@ function modLines (
     ? `(${row.unavailable})`
     : row.kind === 'option'
       ? `variant ${rollText(row.option ?? 0)}`
-      // У мода-флага значения нет, и флажок слева уже сказал всё: слово
-      // «есть/нет» отнимало у названия девять символов ни за что.
+      // A flag mod has no value, and the checkbox on the left already says everything: the word
+      // "yes/no" took nine characters from the name for nothing.
       : ''
-  // Флажок в скобки не заворачиваем: он сам из скобок, а выбранная строка уже
-  // помечена полоской и цветом.
+  // We do not wrap the checkbox in brackets: it is made of brackets itself, and the selected line
+  // is already marked with the bar and the color.
   return { lines: listLines(px, width, box, row.label, tail) }
 }
 
 /**
- * Кадр редактора: что уедет в поиск и что игрок правит прямо сейчас.
+ * Editor frame: what goes to the search and what the player edits right now.
  *
- * `last` — цена, которая уже получена. Пока черновик не применён, она названа
- * прежней: приписать старое число новому набору фильтров значит соврать о том,
- * за что эта цена. Это требование эпика, а не оформление.
+ * `last` is the price already received. While the draft is not applied, it is called
+ * previous: attaching the old number to a new filter set means lying about what
+ * this price is for. This is an epic requirement, not decoration.
  */
 export function editorFrame (
   item: PricedItem,
@@ -520,21 +522,21 @@ export function editorFrame (
   return editorView(item, editor, layout, last).lines
 }
 
-/** Зона экрана, под которой лежит слот курсора. Пустая — не кликабельная строка. */
+/** A screen zone with a cursor slot under it. An empty one is a non-clickable line. */
 export interface EditorZone { slot: number, x: number, y: number, w: number, h: number }
 
 /**
- * Кадр редактора вместе с зонами наведения.
+ * Editor frame together with the hover zones.
  *
- * Зоны нужны с тех пор, как курсор стал каналом ввода: замер #94
- * показал, что левый тачпад двигает указатель на сервере игры, а правый — нет, то есть у
- * панели есть свой манипулятор, не отнятый у игрока. Палец наводит на строку,
- * задняя кнопка действует.
+ * Zones are needed since the cursor became an input channel: measurement #94
+ * showed that the left trackpad moves the pointer on the game server and the right one
+ * does not, so the panel has its own pointing device that is not taken from the player.
+ * The finger points at a line, a back button acts.
  *
- * Строка мода делится по горизонтали на четыре зоны: флажок, min, max и `=` — ровно те
- * слоты, которые до этого перебирались кнопкой. Строка подвала — подтверждение
- * и отмена. Недоступные моды и служебные строки зон не получают: делать с ними
- * нечего, а «нажал и ничего не произошло» хуже, чем «туда не наводится».
+ * A mod line is split horizontally into four zones: checkbox, min, max and `=`, exactly the
+ * slots that a button cycled through before. The footer line is confirm
+ * and cancel. Unavailable mods and service lines get no zones: there is nothing to do
+ * with them, and "pressed and nothing happened" is worse than "cannot point there".
  */
 export function editorView (
   item: PricedItem,
@@ -551,8 +553,8 @@ export function editorView (
   const sent = editor.draft.filter(row => row.enabled && row.id).length
   const available = editor.draft.filter(row => row.id).length
 
-  // Две строки вместо трёх: цена и состояние фильтров живут в одной. Место на
-  // 7" экране дороже симметрии, а разделителей и так хватает.
+  // Two lines instead of three: the price and the filter state live in one. Space on
+  // a 7" screen is worth more than symmetry, and there are enough dividers already.
   const status = `searching ${sent} of ${available} · ${dirty ? 'draft' : 'applied'}`
   const head: Row[] = [text(itemTitle(item), layout.title, ACCENT)]
   if (last?.price) {
@@ -569,9 +571,9 @@ export function editorView (
   head.push(rule())
 
   const foot: Row[] = [rule()]
-  // Рынок стоит отдельной строкой над кнопками: это часть вопроса, который
-  // уедет в трейд, а не настройка где-то в стороне. Клик по ней перебирает
-  // пять режимов по кругу — выпадающий список пальцем не берётся.
+  // The market has its own line above the buttons: it is part of the question that
+  // goes to trade, not a setting somewhere aside. A click on it cycles through
+  // the five modes: a dropdown cannot be used with a finger.
   foot.push(text(
     `${focusMark(`mode: ${MODE_LABEL[editor.mode]}`, slot.kind === 'mode', false)}`,
     layout.body,
@@ -587,23 +589,23 @@ export function editorView (
   ))
   if (problem) foot.push(text(`${problem.reason} — cannot search like that`, layout.body, ERROR))
   if (!editor.draft.length) {
-    // Форма без модов — валюта, карта, ключ. Редактировать нечего, и это не сбой.
+    // A form without mods: currency, a map, a key. There is nothing to edit, and it is not a fault.
     foot.push(text('item has no mods — searching by name and base', layout.body, MUTED))
   }
 
-  // Сколько СТРОК влезет между шапкой и подвалом, не вылезая за низ экрана.
-  // Считаем строки, а не моды: длинное название занимает две, и каждая смена
-  // группы добавляет заголовок.
+  // How many LINES fit between the header and the footer without going below the screen.
+  // We count lines, not mods: a long name takes two, and each group
+  // change adds a header.
   const step = lineHeight(layout.body) + GAP
   const room = SCREEN_H - layout.y - PAD * 2 - heightOf([...head, ...foot])
-  // Минус две строки: «выше ещё N» и «ниже ещё N» тоже занимают место.
+  // Minus two lines: "N more above" and "N more below" take space too.
   const budget = Math.max(2, Math.floor(room / step) - 2)
-  // Грубая оценка «сколько это модов» нужна только чтобы прицелить окно на
-  // выбранную строку; сколько войдёт на самом деле, решает бюджет ниже.
+  // A rough estimate of "how many mods that is" is only needed to aim the window at
+  // the selected line; the budget below decides how many really fit.
   const visible = Math.max(1, Math.floor(budget / 1.4))
 
-  // Курсор на подтверждении не сбрасывает список к началу: окно держится за
-  // последний мод, который игрок смотрел.
+  // The cursor on confirm does not reset the list to the start: the window holds on to
+  // the last mod the player looked at.
   let anchor = 0
   for (let i = Math.min(editor.index, all.length - 1); i >= 0; i--) {
     const seen = all[i]!
@@ -611,7 +613,7 @@ export function editorView (
   }
   let start = Math.max(0, Math.min(anchor - Math.floor(visible / 2), editor.draft.length - visible))
 
-  /** Что влезает в бюджет строк, начиная с мода `from`. */
+  /** What fits in the line budget, starting from mod `from`. */
   const pick = (from: number): Array<{ index: number, lines: string[], controls?: string[], group?: string }> => {
     const out: Array<{ index: number, lines: string[], controls?: string[], group?: string }> = []
     let used = 0
@@ -634,11 +636,11 @@ export function editorView (
   }
 
   let shown = pick(start)
-  // Выбранная строка обязана быть на экране: иначе курсор уезжает за край окна
-  // и палец водит вслепую.
-  // Окно тогда заканчивается на ней, а не начинается с неё: прежнее `start =
-  // anchor` на последнем моде оставляло его одного и прятало семь остальных за
-  // «more above» (прогон #145, Large Cluster Jewel).
+  // The selected line must be on the screen: otherwise the cursor goes past the window edge
+  // and the finger moves blind.
+  // The window then ends on it and does not start with it: the old `start =
+  // anchor` on the last mod left it alone and hid the other seven behind
+  // "more above" (run #145, Large Cluster Jewel).
   if (!shown.some(entry => entry.index === anchor)) {
     start = anchor
     while (start > 0 && pick(start - 1).some(entry => entry.index === anchor)) start--
@@ -646,7 +648,7 @@ export function editorView (
   }
 
   const list: Row[] = []
-  /** Первая строка мода — к ней привязаны зоны наведения. */
+  /** The first line of a mod: the hover zones are tied to it. */
   const headRow = new Map<number, Row>()
   if (start > 0) list.push(text(`... ${start} more above`, layout.body, MUTED))
   for (const entry of shown) {
@@ -668,8 +670,8 @@ export function editorView (
   const rows = [...head, ...list, ...foot]
   const { lines, spans, height } = laidOutFrame(rows, layout)
 
-  // Зоны считаются по ТЕМ ЖЕ пролётам, что нарисованы: индекс строки списка
-  // переводится в индекс пролёта, а не в отдельно посчитанный y.
+  // Zones are computed from THE SAME spans that are drawn: the list row index
+  // maps to a span index, not to a separately computed y.
   const textRows: Row[] = rows.filter(row => row.kind === 'text')
   const zones: EditorZone[] = []
   const zoneOf = (row: Row, slot: number, part = 0, parts = 1): void => {
@@ -684,7 +686,7 @@ export function editorView (
     const index = entry.index
     const row = editor.draft[index]!
     const line = headRow.get(index)
-    if (!line || !row.id) return // недоступный мод трогать нечем
+    if (!line || !row.id) return // an unavailable mod has nothing to touch
     const fields: Array<Slot['kind']> = row.kind === 'range'
       ? ['enabled', 'min', 'max', 'exact']
       : ['enabled']
@@ -701,16 +703,16 @@ export function editorView (
     zoneOf(actionRow, all.findIndex(s => s.kind === 'cancel'), 1, 2)
   }
 
-  // Прямоугольник всей панели, а не только строк: «курсор ушёл с панели»
-  // считается по нему, иначе палец, попавший между строк, читался бы как уход.
+  // The rectangle of the whole panel, not only of the rows: "the cursor left the panel"
+  // is computed by it, otherwise a finger that lands between rows would read as leaving.
   const box: EditorZone = { slot: -1, x: layout.x, y: layout.y, w: layout.w, h: height }
   return { lines, zones, box }
 }
 
 /**
- * Слот под курсором. `null` — курсор вне панели: выбор при этом НЕ сбрасывается
- * (за это отвечает вызывающий), потому что указатель относительный и уезжает за
- * край панели от любого лишнего движения пальцем.
+ * The slot under the cursor. `null` means the cursor is outside the panel: the selection is NOT reset
+ * then (the caller is responsible for that), because the pointer is relative and moves past
+ * the panel edge from any extra finger motion.
  */
 export function zoneAt (zones: EditorZone[], x: number, y: number): number | null {
   for (const zone of zones) {
@@ -720,13 +722,13 @@ export function zoneAt (zones: EditorZone[], x: number, y: number): number | nul
 }
 
 /**
- * Беда словами для игрока. Кадр читают в бою, поэтому у каждой беды
- * три ответа: что случилось, подробность и **что делать** — без последнего
- * игрок жмёт кнопку наугад или решает, что poe-deck сломан.
+ * A failure in words for the player. The frame is read in combat, so each failure
+ * has three answers: what happened, a detail and **what to do**. Without the last one
+ * the player presses a button at random or decides that poe-deck is broken.
  *
- * `retryAt` есть только у лимита: момент, когда трейд снова примет запрос.
- * Секунды до него считаются в момент рисования, а не хранятся числом —
- * иначе повторное нажатие показало бы прежний остаток.
+ * Only the rate limit has `retryAt`: the moment when trade accepts a request again.
+ * The seconds until then are computed when drawing, not stored as a number:
+ * otherwise a repeated press would show the old remainder.
  */
 export interface Failure {
   title: string
@@ -735,19 +737,19 @@ export interface Failure {
   retryAt?: number
 }
 
-/** Секунды до повтора, округлённые вверх: «0s» при живом окне было бы враньём. */
+/** Seconds until retry, rounded up: "0s" while the window is still open would be a lie. */
 export function secondsLeft (retryAt: number, now: number): number {
   return Math.max(1, Math.ceil((retryAt - now) / 1000))
 }
 
 /**
- * Кадр беды. Заголовок — что случилось, ниже подробность и одна строка «что
- * делать» своим цветом: её ищут глазами первой.
+ * Failure frame. The title is what happened, below it the detail and one "what to
+ * do" line in its own color: the eye looks for it first.
  *
- * Кадр лимита перерисовывается по событию (ADR 0003, Решение 3), а не по
- * таймеру кадров: новое нажатие рисует его заново с новым остатком, а конец
- * окна сменяет его кадром `rateLimitOverFrame`. Секундомера, тикающего раз в
- * секунду, нет намеренно.
+ * The rate limit frame is redrawn on an event (ADR 0003, Decision 3), not on a
+ * frame timer: a new press draws it again with a new remainder, and the end of
+ * the window replaces it with the `rateLimitOverFrame` frame. There is no stopwatch
+ * that ticks once per second, on purpose.
  */
 export function errorFrame (failure: Failure, now = Date.now()): string[] {
   const detail = failure.retryAt != null
@@ -763,20 +765,20 @@ export function errorFrame (failure: Failure, now = Date.now()): string[] {
 }
 
 /**
- * Кнопка прайс-чека в шаблоне раскладки — словом для игрока. Шаблон вешает
- * аккорд `POE_DECK_KEYS` на нижнюю левую заднюю кнопку (ADR 0002, Ф17): L3
- * остаётся игре — клик стика показывает расширенный текст предмета. Договор
- * держит tools/steam-template.test.ts.
+ * The price-check button in the layout template, as a word for the player. The template puts
+ * the `POE_DECK_KEYS` chord on the lower left back button (ADR 0002, F17): L3
+ * stays with the game, a stick click shows the advanced item text. The contract
+ * is held by tools/steam-template.test.ts.
  */
 export const PRICE_BUTTON = 'L5'
-/** Кнопка «убрать / вернуть» в шаблоне раскладки (`POE_DECK_TOGGLE_KEYS`). */
+/** The "hide / bring back" button in the layout template (`POE_DECK_TOGGLE_KEYS`). */
 export const TOGGLE_BUTTON = 'L4'
 
 /**
- * Первый запуск после установки: один кадр «всё готово» и какую
- * кнопку жать. Показывается один раз на устройство — метку ставит демон.
- * Без него первое, что игрок видит от poe-deck, — ничего, а ничего неотличимо
- * от «не поставилось».
+ * First launch after install: one "all ready" frame and which
+ * button to press. It is shown once per device; the daemon sets the mark.
+ * Without it the first thing the player sees from poe-deck is nothing, and nothing cannot be told
+ * apart from "did not install".
  */
 export function readyFrame (): string[] {
   return frame([
@@ -788,7 +790,7 @@ export function readyFrame (): string[] {
   ])
 }
 
-/** Окно лимита кончилось, пока кадр лимита был на экране: можно жать снова. */
+/** The rate limit window ended while the rate limit frame was on the screen: you can press again. */
 export function rateLimitOverFrame (): string[] {
   return frame([
     text('trade is ready again', 24, ACCENT),
@@ -798,21 +800,21 @@ export function rateLimitOverFrame (): string[] {
   ])
 }
 
-/** Подсказка про лигу: файл конфига игрока и самопроверка (src/config.ts). */
-// Влезает в строку кегля 18 (64 символа): длиннее — и совет уйдёт в «...».
-// Полный путь к файлу называет doctor.
+/** League hint: the config file of the player and the self-check (src/config.ts). */
+// Fits in a size-18 line (64 characters): longer, and the advice goes to "...".
+// doctor names the full path to the file.
 const LEAGUE_TODO = 'fix league in poe-deck.conf or run poe-deck doctor'
 
 /**
- * Отказ → слова для человека. Разные причины требуют разных действий, поэтому
- * «что-то пошло не так» здесь запрещено: оно неотличимо от молчания.
+ * Failure to words for a human. Different causes need different actions, so
+ * "something went wrong" is forbidden here: it cannot be told apart from silence.
  */
 export function explainFailure (err: unknown): Failure {
   if (err instanceof RateLimitError) {
     return {
       title: 'trade rate limit',
-      // Отказ нашего лимитера и отказ сервера просят одного и того же, но
-      // первый — вежливость, второй — штраф, и игроку полезно знать разницу.
+      // A refusal from our limiter and a refusal from the server ask for the same thing, but
+      // the first is politeness and the second is a penalty, and the player benefits from knowing the difference.
       detail: err.source === 'server' ? 'GGG asked to wait' : 'holding requests under the GGG limit',
       todo: 'press again after that — earlier presses are not sent',
       retryAt: err.retryAt

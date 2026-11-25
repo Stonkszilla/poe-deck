@@ -1,34 +1,34 @@
 #!/bin/sh
-# Установка и обновление poe-deck из архива релиза.
+# Install and update poe-deck from a release archive.
 #
-# Рецепт один: им ставит игрок из Konsole и джоб `poe-deck/deck-probe`,
-# MODE=DAEMON. Расхождения между ними быть не может — он один. Прежний
-# tools/install-daemon.sh (исходники, bun, distrobox, сборка на Deck) стал
-# tools/dev-workspace.sh: тот готовит рабочее место разработчика для зондов
-# PAD/POINTER/UX и демон больше не ставит.
+# There is one recipe: the player runs it from Konsole, and the job
+# `poe-deck/deck-probe` runs it with MODE=DAEMON. The two cannot drift: it is
+# the same script. The old tools/install-daemon.sh (sources, bun, distrobox,
+# build on the Deck) became tools/dev-workspace.sh: it prepares the developer
+# workspace for the PAD/POINTER/UX probes and no longer installs the daemon.
 #
-# Скрипт лежит в КОРНЕ распакованного архива, рядом с собранным демоном:
+# The script sits in the ROOT of the unpacked archive, next to the built daemon:
 #
 #   tar xzf poe-deck-vX.Y.Z-steamos-x86_64.tar.gz
 #   sh poe-deck-vX.Y.Z/install.sh [--no-start]
 #
-# --no-start  только поставить, юнит не включать и не запускать
+# --no-start  only install; do not enable or start the unit
 #
-# Ничего не компилируется, sudo не нужен, git и bun не нужны. Всё — в $HOME:
-# rootfs SteamOS read-only и переживает обновления системы только в /home.
+# Nothing is compiled; no sudo, git or bun is needed. Everything goes to $HOME:
+# the SteamOS rootfs is read-only, and only /home survives system updates.
 #
-#   ~/.local/share/poe-deck/                  демон, C-бинари, лицензии, uninstall.sh
-#   ~/.config/systemd/user/poe-deck.service   юнит systemd --user
+#   ~/.local/share/poe-deck/                  daemon, C binaries, licenses, uninstall.sh
+#   ~/.config/systemd/user/poe-deck.service   systemd --user unit
 #   ~/.local/share/Steam/controller_base/templates/controller_neptune_poe_deck.vdf
-#                                             шаблон раскладки Steam Input
+#                                             Steam Input layout template
 #
-# Повторный запуск из архива новой версии = обновление: юнит останавливается,
-# каталог заменяется целиком, юнит поднимается снова. Конфиг игрока
-# ~/.config/poe-deck/poe-deck.conf установщик создаёт из примера в наборе только
-# при первой установке, когда файла ещё нет; существующий не трогает никогда.
-# Удаление — uninstall.sh из того же каталога.
+# A second run from a newer archive is an update: the unit stops, the
+# directory is replaced as a whole, and the unit starts again. The installer
+# creates the player config ~/.config/poe-deck/poe-deck.conf from the bundled
+# example only on the first install, when the file does not exist yet. It
+# never touches an existing one. To remove: uninstall.sh in the same directory.
 #
-# Вывод — по-английски: его читает игрок (CLAUDE.md § Language).
+# Output is in English: the player reads it.
 
 set -eu
 
@@ -74,8 +74,8 @@ echo "✓  package: poe-deck $NEW"
 if [ -n "$OLD" ]; then echo "   installed now: poe-deck $OLD — this run updates it"; fi
 
 say "Stop the running daemon"
-# Обновление поверх живого демона: файл заменяется целиком, и старый процесс
-# не должен держать каталог, который сейчас уедет.
+# Update over a live daemon: the file is replaced as a whole, and the old
+# process must not hold the directory that is about to move away.
 if systemctl --user is-active --quiet poe-deck 2>/dev/null; then
   systemctl --user stop poe-deck
   echo "✓  stopped"
@@ -84,8 +84,8 @@ else
 fi
 
 say "Files in $DEST"
-# Каталог собирается рядом и подменяется одним mv: прерванная установка не
-# оставит наполовину старый, наполовину новый набор.
+# The directory is built next to the old one and swapped with one mv: an
+# interrupted install does not leave a half-old, half-new set.
 mkdir -p "$DATA"
 rm -rf "$DEST.new" "$DEST.old"
 mkdir "$DEST.new"
@@ -96,8 +96,8 @@ rm -rf "$DEST.old"
 echo "✓  poe-deck $(cat "$DEST/BUILD")"
 
 say "Steam Input layout template"
-# Раскладка не набирается руками: шаблон ложится в каталог шаблонов
-# Steam, игрок применяет его в Controller Settings игры.
+# The layout is not entered by hand: the template goes to the Steam template
+# directory, and the player applies it in the Controller Settings of the game.
 TEMPLATE=''
 sh "$DEST/tools/steam-template.sh" install
 if sh "$DEST/tools/steam-template.sh" check > /dev/null; then
@@ -105,13 +105,13 @@ if sh "$DEST/tools/steam-template.sh" check > /dev/null; then
 fi
 
 say "systemd user unit"
-# graphical-session.target, а не «после Game Mode»: цели «Game Mode поднялся» в
-# systemd нет. Поэтому Restart=always — единственный честный ответ. Демон,
-# запущенный до сессии, увидит отсутствие протокола, скажет об этом словами и
-# выйдет с кодом 3; через RestartSec его поднимут снова, и однажды сессия уже
-# будет на месте. Окружение сессии он читает сам из
-# /run/user/<uid>/gamescope-environment — прописывать DISPLAY в юнит нельзя,
-# на момент старта юнита его ещё не существует.
+# graphical-session.target, not "after Game Mode": systemd has no target for
+# "Game Mode is up". So Restart=always is the only honest answer. A daemon
+# started before the session sees that the protocol is missing, says so in
+# words and exits with code 3; after RestartSec systemd starts it again, and
+# at some point the session is there. The daemon reads the session environment
+# itself from /run/user/<uid>/gamescope-environment. Do not put DISPLAY in the
+# unit: it does not exist yet when the unit starts.
 mkdir -p "$(dirname "$UNIT")"
 cat > "$UNIT" <<EOF
 [Unit]
@@ -131,8 +131,8 @@ EOF
 systemctl --user daemon-reload
 echo "✓  $UNIT"
 
-# Что именно поставлено — для uninstall.sh. Он удаляет ровно этот список и
-# ничего сверх него; конфиг игрока в список не входит.
+# What exactly is installed, for uninstall.sh. It removes exactly this list
+# and nothing more; the player config is not in the list.
 {
   echo "$DEST"
   echo "$UNIT"
@@ -140,9 +140,9 @@ echo "✓  $UNIT"
 } > "$DEST/INSTALLED"
 
 say "Your settings"
-# Пример конфига ложится, только если файла ещё нет: обновление
-# поверх не перетирает то, что игрок поправил. Конфиг не попадает в INSTALLED —
-# он принадлежит игроку, и удаляет его только uninstall.sh --purge.
+# The example config is copied only if the file does not exist yet: an update
+# does not overwrite what the player changed. The config is not in INSTALLED:
+# it belongs to the player, and only uninstall.sh --purge removes it.
 if [ -f "$PLAYER_CONF/poe-deck.conf" ]; then
   echo "✓  your settings in $PLAYER_CONF/poe-deck.conf are kept as they are"
 elif [ -f "$SRC/poe-deck.conf.example" ]; then
@@ -163,8 +163,8 @@ fi
 say "Start"
 systemctl --user enable --now poe-deck
 sleep 3
-# В Desktop Mode демон выходит кодом 3 («это не сессия Game Mode») и ждёт
-# перезапуска юнита — это штатное ожидание, а не провал установки.
+# In Desktop Mode the daemon exits with code 3 ("not a Game Mode session") and
+# waits for the unit restart. This is a normal wait, not a failed install.
 if systemctl --user is-active --quiet poe-deck; then
   echo "✓  poe-deck is running"
 elif journalctl --user -u poe-deck -n 20 --no-pager 2>/dev/null | grep -q 'not a Game Mode session'; then

@@ -10,8 +10,8 @@
     "noEmit": true,
     "skipLibCheck": true
   },
-  // Пин донора собран под Vite и Vue; свой tsconfig у него уже есть.
-  // Проверяем свой код, чужой — нет.
+  // The donor pin builds with Vite and Vue and has its own tsconfig.
+  // We type-check our own code, not the vendored code.
   "include": ["src", "tools"],
   "exclude": ["vendor", "node_modules", "submodules"]
 }

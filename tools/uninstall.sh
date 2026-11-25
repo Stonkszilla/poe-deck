@@ -1,19 +1,19 @@
 #!/bin/sh
-# Удаление poe-deck: останавливает и убирает юнит, удаляет всё, что
-# поставил install.sh, и печатает список удалённого.
+# Remove poe-deck: stops and removes the unit, deletes everything that
+# install.sh installed, and prints the list of what it removed.
 #
 #   sh ~/.local/share/poe-deck/uninstall.sh [--purge]
 #
-# --purge  удалить и настройки игрока ~/.config/poe-deck/, и состояние демона
-#          ~/.local/state/poe-deck/ (метка «кадр ready показан»).
-#          Без флага оба остаются: при переустановке настройки подхватятся
-#          как были, а кадр ready повторно не покажется.
+# --purge  also delete the player settings ~/.config/poe-deck/ and the daemon
+#          state ~/.local/state/poe-deck/ (the "ready frame shown" mark).
+#          Without the flag both stay: after a reinstall the settings load
+#          as they were, and the ready frame does not show again.
 #
-# Что удалять, берётся из списка INSTALLED, который пишет install.sh. Списка
-# нет (установка прервалась до него) — удаляются известные пути по умолчанию.
+# What to delete comes from the INSTALLED list that install.sh writes. If the
+# list is missing (the install stopped before it), the default paths go.
 #
-# Скрипт лежит в каталоге, который сам удаляет, поэтому всё тело — в функции:
-# sh дочитывает её целиком до первого шага.
+# The script sits in the directory that it deletes, so the whole body is in a
+# function: sh reads all of it before the first step.
 
 set -eu
 
@@ -49,8 +49,8 @@ $TEMPLATE"
 
   removed=''
   for path in $LIST; do
-    # Защита от испорченного списка: удаляется только то, что лежит в $HOME
-    # и называется по-нашему.
+    # Guard against a broken list: delete only what is under $HOME
+    # and has our name.
     case "$path" in
       "$HOME"/*poe-deck*|"$HOME"/*poe_deck*) ;;
       *) echo "⚠  skipped, not a poe-deck path: $path"; continue ;;

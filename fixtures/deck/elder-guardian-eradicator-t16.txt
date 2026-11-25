@@ -1,0 +1,27 @@
+Item Class: Maps
+Rarity: Rare
+Iron Voyage
+Map (Tier 16)
+--------
+Atlas Drops: +49% (augmented)
+Item Rarity: +29% (augmented)
+Monster Pack Size: +19% (augmented)
+--------
+Item Level: 83
+--------
+Monster Level: 83
+--------
+{ Implicit Modifier }
+Area is influenced by The Elder — Unscalable Value
+Map is occupied by The Eradicator(...) — Unscalable Value
+--------
+{ Prefix Modifier "Punishing" (Tier: 1) — Damage, Physical }
+Rare Monsters have Physical Thorns reflecting 800 Physical Damage
+{ Prefix Modifier "Enthralled" (Tier: 1) }
+Unique Bosses are Possessed
+{ Prefix Modifier "Empowered" (Tier: 1) — Elemental, Fire, Cold, Lightning, Ailment }
+Monsters have a 20% chance to Ignite, Freeze and Shock on Hit
+{ Suffix Modifier "of Consecration" (Tier: 1) }
+Area has patches of Consecrated Ground
+--------
+Travel to a Map of this tier or lower by using this in a personal Map Device. Maps can only be used once. 

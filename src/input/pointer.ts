@@ -1,31 +1,31 @@
-// Указатель сессионного X-сервера как аналоговый канал панели.
+// The pointer of the session X server as the analog channel of the panel.
 //
-// После замеров [#87] и [#88]. evdev отпал не по правам, а по захвату
-// (ADR 0002, Ф9): контроллер читается, но молчит — Steam Input держит его себе.
-// С включённым mouse behaviour указатель существует, но в `/dev/input` его нет
-// вовсе (Ф10): Steam Input отдаёт его внутрь gamescope.
+// After measurements [#87] and [#88]. evdev dropped out not because of permissions but because of a grab
+// (ADR 0002, F9): the controller is readable but silent, because Steam Input keeps it.
+// With mouse behaviour on, the pointer exists, but it is not in `/dev/input`
+// at all (F10): Steam Input gives it into gamescope.
 //
-// Отсюда единственный оставшийся аналоговый канал: **указатель того самого
-// X-сервера `:0`, на котором живёт наша панель**. Он читается опросом, а не
-// событиями, и потому не требует ни фокуса, ни ввода в слой оверлея — то есть
-// не спорит с инвариантом «ввод из слоя оверлея не приходит никогда».
+// Hence the only analog channel left: **the pointer of the same
+// X server `:0` where our panel lives**. We read it by polling, not
+// by events, so it needs neither focus nor input into the overlay layer; so it
+// does not conflict with the invariant "input never comes from the overlay layer".
 //
-// Здесь только разбор ответа `xdotool getmouselocation --shell`. Сам опрос —
-// в зонде (`tools/probe-pointer.ts`); в рантайме его заменит `XQueryPointer`
-// из процесса панели, если замер скажет «да».
+// Here is only the parser of the `xdotool getmouselocation --shell` reply. The polling
+// is in the probe (`tools/probe-pointer.ts`); at runtime `XQueryPointer`
+// from the panel process replaces it, if the measurement says "yes".
 
 export interface PointerAt { x: number, y: number, screen?: number, window?: number }
 
 /**
- * Ответ `xdotool getmouselocation --shell`:
+ * The reply of `xdotool getmouselocation --shell`:
  *
  *   X=640
  *   Y=400
  *   SCREEN=0
  *   WINDOW=12582919
  *
- * `null` — ответа нет или он не про указатель. Пустая строка тоже сюда: молчащий
- * `xdotool` неотличим от нулевых координат, если не различить их явно.
+ * `null`: no reply, or the reply is not about the pointer. An empty string goes here too: a silent
+ * `xdotool` looks the same as zero coordinates unless we tell them apart explicitly.
  */
 export function parsePointer (text: string): PointerAt | null {
   const num = (key: string): number | undefined => {
@@ -47,7 +47,7 @@ export function parsePointer (text: string): PointerAt | null {
 
 export interface PointerTrack {
   samples: number
-  /** Сколько раз координата отличалась от предыдущей. Это и есть «указатель жив». */
+  /** How many times the coordinate differed from the previous one. This is "the pointer is alive". */
   moves: number
   minX: number
   maxX: number
@@ -60,7 +60,7 @@ export const emptyTrack = (): PointerTrack => ({
   samples: 0, moves: 0, minX: Infinity, maxX: -Infinity, minY: Infinity, maxY: -Infinity
 })
 
-/** Добавляет отсчёт к следу. Движением считается только смена координаты. */
+/** Adds a sample to the track. Only a coordinate change counts as a move. */
 export function track (prev: PointerTrack, at: PointerAt): PointerTrack {
   const moved = !prev.last || prev.last.x !== at.x || prev.last.y !== at.y
   return {
@@ -75,9 +75,9 @@ export function track (prev: PointerTrack, at: PointerAt): PointerTrack {
 }
 
 /**
- * Вердикт следа словами. Разделение важное: «указатель не двигался» и «указатель
- * шевельнулся на пиксель» — разные ответы. Первое значит, что канала нет; второе
- * значит, что канал есть, но палец по тачпаду до него доезжает не весь.
+ * The track verdict in words. The distinction matters: "the pointer did not move" and "the pointer
+ * moved by one pixel" are different answers. The first means there is no channel; the second
+ * means the channel exists, but not all of the finger travel on the trackpad reaches it.
  */
 export function verdict (t: PointerTrack, screen = { w: 1280, h: 800 }): string {
   if (!t.samples) return '✗  no samples at all: could not read the pointer'
@@ -93,10 +93,10 @@ export function verdict (t: PointerTrack, screen = { w: 1280, h: 800 }): string 
 }
 
 /**
- * На каком сервере курсор действительно шевелился. `null` — ни на одном.
+ * The server on which the cursor really moved. `null`: none.
  *
- * Нужно потому, что серверов два и курсор может жить не там, где панель: замер
- * [#90] показал на `:0` неподвижные 1279,799, пока на экране курсор ходил.
+ * It is needed because there are two servers, and the cursor may live away from the panel: measurement
+ * [#90] showed a still 1279,799 on `:0` while the cursor moved on the screen.
  */
 export function where (tracks: Map<string, PointerTrack>): string | null {
   let best: { display: string, span: number } | null = null
@@ -110,22 +110,22 @@ export function where (tracks: Map<string, PointerTrack>): string | null {
   return best?.display ?? null
 }
 
-// ── кнопка ──────────────────────────────────────────────────────────────────
+// ── button ──────────────────────────────────────────────────────────────────
 //
-// Клик у панели берётся из той же строки `gs-pointer`, что и координаты: маска
-// кнопок приезжает третьим полем `XQueryPointer`. Отдельного канала не нужно —
-// Тестер забиндил левую кнопку мыши на имитацию нажатия тачпада (14.09.2026),
-// а PoE в геймпад-режиме мышь игнорирует (ADR 0002, Ф12). То есть нажатие
-// достаётся нам и не достаётся игре.
+// The panel takes the click from the same `gs-pointer` line as the coordinates: the button
+// mask arrives as the third field of `XQueryPointer`. No separate channel is needed:
+// the tester bound the left mouse button to the emulated trackpad press (14.09.2026),
+// and PoE in gamepad mode ignores the mouse (ADR 0002, F12). So the press
+// reaches us and does not reach the game.
 
-/** `Button1Mask` в ответе `XQueryPointer` — левая кнопка. */
+/** `Button1Mask` in the `XQueryPointer` reply: the left button. */
 export const BUTTON1 = 1 << 8
 
 export const isPressed = (mask: number): boolean => (mask & BUTTON1) !== 0
 
 /**
- * Строка `gs-pointer`: `pointer <x> <y> <mask>`. `null` — строка не про указатель
- * (баннер, жалоба); молчать о таких нельзя только тому, кто их печатает.
+ * A `gs-pointer` line: `pointer <x> <y> <mask>`. `null`: the line is not about the pointer
+ * (a banner, a complaint); only the process that prints such lines must not stay silent about them.
  */
 export function parsePointerLine (line: string): { x: number, y: number, mask: number } | null {
   const found = line.match(/^pointer (-?\d+) (-?\d+) (\d+)/)

@@ -1,28 +1,28 @@
-// Редактор фильтров поиска: черновик, применённый набор и переход между ними.
+// Search filter editor: the draft, the applied set and the move between them.
 //
-// Этап 1. Здесь нет ни ввода, ни рисования, ни сети — только состояние
-// и разрешённые переходы. Так сделано потому, что схема управления на Deck ещё
-// НЕ выбрана (ADR 0002 держит только прайс-чек): какой кнопкой ходить по списку
-// и какой подтверждать, решается на живом железе. Реализовать сначала действия,
-// а привязки — потом, значит не выдумывать раскладку из головы.
+// Stage 1. There is no input, no drawing and no network here, only the state
+// and the allowed transitions. This is because the control scheme on the Deck is
+// NOT chosen yet (ADR 0002 holds only the price check): which button moves through the list
+// and which one confirms is decided on live hardware. Implementing the actions first
+// and the bindings later means not inventing a layout from thin air.
 //
-// ── Почему действий именно столько ─────────────────────────────────────────
+// ── Why there are exactly this many actions ────────────────────────────────
 //
-// Приёмка эпика требует: пройти весь список модов, включить и выключить фильтр,
-// задать и очистить обе границы, подтвердить поиск и отменить правки. Это
-// минимум — `next`/`prev`/`act`/`clear`/`confirm`/`cancel` плюс вход и выход.
-// Кнопок под них на Deck столько не будет: свободны две задние (нижняя правая
-// занята шаблоном `gamepad_fps`, нижняя левая — прайс-чеком), а зонд разбирает
-// не больше восьми аккордов. Поэтому `confirm` и `cancel` доступны ДВОЯКО:
-// отдельным действием и как строки списка, на которых работает `act` — схема с
-// двумя кнопками (`next` + `act`) проходит все требования приёмки, а схема с
-// отдельными кнопками работает быстрее. Что выбрать — покажет прогон.
+// The epic acceptance requires: go through the whole mod list, enable and disable a filter,
+// set and clear both bounds, confirm the search and cancel the edits. That is the
+// minimum: `next`/`prev`/`act`/`clear`/`confirm`/`cancel` plus enter and exit.
+// The Deck will not have that many buttons for them: two back buttons are free (the lower right one
+// is taken by the `gamepad_fps` template, the lower left one by the price check), and the probe parses
+// no more than eight chords. So `confirm` and `cancel` are available in TWO ways:
+// as a separate action and as list lines on which `act` works. The scheme with
+// two buttons (`next` + `act`) meets all acceptance requirements, and the scheme with
+// separate buttons is faster. A run shows which one to choose.
 //
-// ── Что здесь намеренно не решается ───────────────────────────────────────
+// ── What is left out here on purpose ──────────────────────────────────────
 //
-// Одновременная работа с игрой (крестовина продолжает управлять PoE), удержание
-// и автоповтор, ответ trade API и память последнего результата — не тут. Это
-// либо свойства канала ввода, либо работа демона.
+// Working with the game at the same time (the D-pad keeps controlling PoE), hold
+// and auto-repeat, the trade API answer and the memory of the last result are not here. They
+// are either properties of the input channel or the work of the daemon.
 
 import {
   copyFilters,
@@ -42,8 +42,8 @@ import {
 } from './trade/query'
 
 /**
- * Поиск по решению игрока. `stats` нет — автоматический набор, как у первого
- * нажатия кнопки: так его видит кэш цены и так он подписан на панели.
+ * A search chosen by the player. No `stats` means the automatic set, as on the first
+ * button press: this is how the price cache sees it and how the panel labels it.
  */
 export interface EditorSearch { stats?: StatEntryFilter[], mode: SearchMode }
 
@@ -53,7 +53,7 @@ export type EditorAction =
   | 'act' | 'clear'
   | 'confirm' | 'cancel'
 
-/** Куда указывает курсор. Недоступные моды сюда не попадают: делать с ними нечего. */
+/** Where the cursor points. Unavailable mods do not get here: there is nothing to do with them. */
 export type Slot =
   | { kind: 'enabled' | 'min' | 'max' | 'exact', row: number }
   | { kind: 'mode' }
@@ -61,33 +61,33 @@ export type Slot =
   | { kind: 'cancel' }
 
 export interface Editor {
-  /** Панель редактора на экране. Закрытый редактор черновик не теряет. */
+  /** The editor panel is on the screen. A closed editor does not lose the draft. */
   open: boolean
-  /** Черновик: что игрок навёл. В поиск не уходит до подтверждения. */
+  /** The draft: what the player set up. It does not go to the search until confirm. */
   draft: ModFilter[]
-  /** Применённый набор: по нему получена цена, которая сейчас на панели. */
+  /** The applied set: the price now on the panel was received with it. */
   applied: ModFilter[]
   /**
-   * Автонабор — с ним цена показалась после нажатия кнопки. К нему возвращает
-   * отмена: после подтверждения откатывать к применённому набору нечего, а
-   * игрок нажимает cancel, чтобы снять свой выбор (тестер, прогон #145).
+   * The auto set: the price appeared with it after the button press. Cancel goes back
+   * to it: after a confirm there is nothing to roll back to in the applied set, and
+   * the player presses cancel to drop their own choice (tester, run #145).
    */
   auto: ModFilter[]
   index: number
-  /** Правка значения: `next`/`prev` меняют число, а не двигают курсор. */
+  /** Value edit: `next`/`prev` change the number and do not move the cursor. */
   editing: boolean
   /**
-   * Режим поиска черновика — четвёртый рынок в списке трейда, а не настройка.
-   * Инстант-баяут и сделка из рук в руки дают на одном предмете цены, разные
-   * в разы, поэтому режим правится там же, где фильтры, и применяется тем же
-   * подтверждением.
+   * The search mode of the draft is the fourth market in the trade list, not a setting.
+   * Instant buyout and a hand-to-hand trade give prices on one item that differ
+   * many times, so the mode is edited in the same place as the filters and applied by the same
+   * confirm.
    */
   mode: SearchMode
-  /** Режим, которым получена цена, что сейчас на панели. */
+  /** The mode with which the price now on the panel was received. */
   appliedMode: SearchMode
 }
 
-/** Новый редактор под предмет. На каждый предмет свой — черновик не переезжает. */
+/** A new editor for an item. Each item has its own, the draft does not move over. */
 export function newEditor (item: PricedItem, mode: SearchMode = DEFAULT_SEARCH_MODE): Editor {
   const rows = defaultFilters(item)
   return {
@@ -102,11 +102,11 @@ export function newEditor (item: PricedItem, mode: SearchMode = DEFAULT_SEARCH_M
   }
 }
 
-/** Слоты курсора по черновику: у диапазона четыре, у флага и варианта один. */
+/** Cursor slots for a draft: a range has four, a flag and a variant have one. */
 export function slots (draft: ModFilter[]): Slot[] {
   const out: Slot[] = []
   draft.forEach((row, index) => {
-    if (!row.id) return // недоступный мод показывается, но крутить в нём нечего
+    if (!row.id) return // an unavailable mod is shown, but there is nothing in it to turn
     out.push({ kind: 'enabled', row: index })
     if (row.kind === 'range') {
       out.push({ kind: 'min', row: index }, { kind: 'max', row: index }, { kind: 'exact', row: index })
@@ -121,16 +121,16 @@ export function slotAt (editor: Editor): Slot {
   return all[Math.min(editor.index, all.length - 1)]!
 }
 
-/** Черновик расходится с применённым набором — цена на панели относится к прежнему. */
+/** The draft differs from the applied set: the price on the panel belongs to the previous one. */
 export function isDirty (editor: Editor): boolean {
   return editor.mode !== editor.appliedMode ||
     filterSignature(editor.draft) !== filterSignature(editor.applied)
 }
 
 /**
- * Первая беда черновика и строка, в которой она живёт. Есть — подтверждение
- * поиск не запускает. Причина и мод возвращаются порознь: на панели шириной в
- * 460 px они не помещаются одной строкой, а мод и так виден в списке.
+ * The first problem of the draft and the row it lives in. If there is one, confirm
+ * does not start the search. The reason and the mod come back apart: on a panel
+ * 460 px wide they do not fit in one line, and the mod is visible in the list anyway.
  */
 export function draftProblem (draft: ModFilter[]): { reason: string, row: ModFilter } | undefined {
   for (const row of draft) {
@@ -142,26 +142,26 @@ export function draftProblem (draft: ModFilter[]): { reason: string, row: ModFil
 }
 
 /**
- * Обе границы стоят ровно на роле предмета. Цена многих вещей зависит от
- * точного числа, а не от «не меньше»: у Mageblood три фласки стоят 110 div,
- * две — 30 (прогон #148, тестер).
+ * Both bounds sit exactly on the item roll. The price of many items depends on
+ * the exact number, not on "at least": a Mageblood with three flasks costs 110 div,
+ * with two it costs 30 (run #148, tester).
  */
 export function isExact (row: ModFilter): boolean {
   return row.roll != null && row.min === row.roll && row.max === row.roll
 }
 
-/** Шаг правки границы. Дробный ролл правится десятыми, целый — единицами. */
+/** Bound edit step. A fractional roll is edited by tenths, a whole one by units. */
 function step (row: ModFilter): number {
   return row.roll != null && !Number.isInteger(row.roll) ? 0.1 : 1
 }
 
-/** Значение, с которого начинается правка пустой границы. */
+/** The value an edit of an empty bound starts from. */
 function seed (row: ModFilter, field: 'min' | 'max'): number {
   const roll = row.roll ?? 0
   return field === 'min' ? minRoll(roll) : roll
 }
 
-/** Сложение без плавающего мусора: 20.8 − 0.1 должно быть 20.7, а не 20.699999. */
+/** Addition without floating garbage: 20.8 − 0.1 must be 20.7, not 20.699999. */
 function shift (value: number, by: number): number {
   return Number((value + by).toFixed(2))
 }
@@ -187,13 +187,13 @@ function apply (editor: Editor): Editor {
 }
 
 /**
- * Одно действие игрока → новое состояние и, если он подтвердил, снимок фильтров
- * для ровно одного поиска. `search: null` значит «запроса нет» — правка
- * черновика и навигация лимит trade API не расходуют. Отмена после
- * подтверждения ищет автонабор заново, но это тело уже лежит в кэше цены.
+ * One action of the player to a new state and, if the player confirmed, a filter snapshot
+ * for exactly one search. `search: null` means "no request": draft edits
+ * and navigation do not spend the trade API rate limit. Cancel after
+ * confirm searches the auto set again, but that body is already in the price cache.
  *
- * Некорректный черновик (min больше max) поиск не запускает: снаружи это видно
- * через `draftProblem`, и человек читает причину с панели, а не догадывается.
+ * An invalid draft (min above max) does not start the search: from outside this is visible
+ * through `draftProblem`, and a person reads the reason on the panel instead of guessing.
  */
 export function reduce (
   editor: Editor,
@@ -204,7 +204,7 @@ export function reduce (
   switch (action) {
     case 'open':
       return none({ ...editor, open: true, editing: false })
-    // Скрытие черновик не трогает: игрок убрал панель, а не отказался от правок.
+    // Hiding does not touch the draft: the player hid the panel, but did not drop the edits.
     case 'close':
       return none({ ...editor, open: false, editing: false })
 
@@ -217,12 +217,12 @@ export function reduce (
       const slot = slotAt(editor)
       if (slot.kind === 'confirm') return reduce({ ...editor, editing: false }, 'confirm')
       if (slot.kind === 'cancel') return reduce({ ...editor, editing: false }, 'cancel')
-      // Режим перебирается по кругу одним действием: выпадающий список на 7"
-      // тачскрине попасть нечем, а режимов всего пять.
+      // The mode cycles with one action: a dropdown on a 7" touchscreen
+      // cannot be hit, and there are only five modes.
       if (slot.kind === 'mode') return none({ ...editor, mode: nextSearchMode(editor.mode), editing: false })
 
-      // Точное значение — одно действие, а не правка двух границ: на #148 это
-      // стоило восьми тапов. Повтор снимает его обратно к умолчанию `N+`.
+      // The exact value is one action, not an edit of two bounds: in #148 that
+      // cost eight taps. A repeat sets it back to the default `N+`.
       if (slot.kind === 'exact') {
         const draft = copyFilters(editor.draft)
         const row = draft[slot.row]!
@@ -242,16 +242,16 @@ export function reduce (
         const draft = copyFilters(editor.draft)
         const row = draft[slot.row]!
         row.enabled = !row.enabled
-        // Включённому диапазону нужна точка отсчёта, иначе фильтр значит просто
-        // «такой мод есть». Умолчание то же, что у автоматического набора.
+        // An enabled range needs a reference point, otherwise the filter just means
+        // "this mod is present". The default is the same as in the automatic set.
         if (row.enabled && row.kind === 'range' && row.min == null && row.max == null) {
           row.min = minRoll(row.roll ?? 0)
         }
         return none({ ...editor, draft })
       }
 
-      // Границу правим в отдельном режиме: те же две кнопки иначе не смогли бы
-      // и ходить по списку, и менять число.
+      // A bound is edited in a separate mode: otherwise the same two buttons could not
+      // both move through the list and change the number.
       if (!editor.editing) {
         const draft = copyFilters(editor.draft)
         const row = draft[slot.row]!
@@ -276,19 +276,19 @@ export function reduce (
     }
 
     case 'cancel': {
-      // Черновик — к автонабору, рынок — к применённому: рынок игрок выбирает
-      // для всех предметов, а не для этого (он и переезжает на следующий).
+      // The draft goes back to the auto set, the market to the applied one: the player selects the market
+      // for all items, not for this one (it also moves to the next one).
       const next: Editor = {
         ...editor,
         draft: copyFilters(editor.auto),
         mode: editor.appliedMode,
         editing: false
       }
-      // Цена на панели уже по автонабору — искать незачем, это просто откат правок.
+      // The price on the panel is already for the auto set: no need to search, this is just an edit rollback.
       if (filterSignature(editor.applied) === filterSignature(editor.auto)) return none(next)
-      // Иначе на панели цена по набору игрока, и после отмены она врала бы.
-      // Поиск уходит как автоматический (`stats` нет): тело то же, что у первого
-      // нажатия, и при том же рынке цена приходит из кэша, без запроса к трейду.
+      // Otherwise the panel has a price for the set of the player, and after cancel it would lie.
+      // The search goes out as automatic (no `stats`): the body is the same as on the first
+      // press, and with the same market the price comes from the cache, without a request to trade.
       return { editor: { ...next, applied: copyFilters(editor.auto) }, search: { mode: editor.appliedMode } }
     }
   }

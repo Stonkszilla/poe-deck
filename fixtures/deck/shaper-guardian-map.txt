@@ -1,0 +1,31 @@
+Item Class: Maps
+Rarity: Rare
+Loath Liturgy
+Shaper Guardian Map
+--------
+Atlas Drops: +52% (augmented)
+Item Rarity: +31% (augmented)
+Monster Pack Size: +20% (augmented)
+--------
+Item Level: 83
+--------
+Monster Level: 83
+--------
+{ Implicit Modifier }
+Area is influenced by The Shaper — Unscalable Value
+--------
+{ Prefix Modifier "Unstoppable" (Tier: 1) — Speed }
+Monsters cannot be Taunted — Unscalable Value
+Monsters' Action Speed cannot be modified to below Base Value
+Monsters' Movement Speed cannot be modified to below Base Value — Unscalable Value
+{ Prefix Modifier "Fecund" (Tier: 1) — Life }
+49(40-49)% more Monster Life
+{ Prefix Modifier "Overlord's" (Tier: 1) — Attack, Caster, Speed }
+Unique Boss deals 25% increased Damage
+Unique Boss has 30% increased Attack and Cast Speed
+{ Suffix Modifier "of Miring" (Tier: 1) — Attack }
+Monsters have 50% increased Accuracy Rating
+Players have -20% to amount of Suppressed Spell Damage Prevented
+(40% of Damage from Suppressed Hits and Ailments they inflict is prevented)
+--------
+Travel to a Map of this tier or lower by using this in a personal Map Device. Maps can only be used once. 

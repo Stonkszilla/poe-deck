@@ -39,8 +39,11 @@ poe-deck does not:
 - **loot filters** — there is no loot filter editor;
 - a game client in another language than **English** — the item parser reads the
   English item text;
-- other trade realms than **PC** (no console realms), and other devices than the
-  Steam Deck with SteamOS.
+- other devices than the Steam Deck with SteamOS.
+
+Known issue: Steam's **performance overlay** (the FPS counter from the Quick
+Access Menu) does not work while poe-deck runs. Both use the same overlay layer
+in Game Mode.
 
 ## Install
 

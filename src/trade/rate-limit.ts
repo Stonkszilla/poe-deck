@@ -1,30 +1,30 @@
-// ЗАИМСТВОВАНО у SnosMe/awakened-poe-trade (MIT, Copyright (c) 2020 Alexander Drozdov).
-// Текст лицензии — licenses/awakened-poe-trade.LICENSE, происхождение — README, § «Донор и пин».
+// BORROWED from SnosMe/awakened-poe-trade (MIT, Copyright (c) 2020 Alexander Drozdov).
+// License text: licenses/awakened-poe-trade.LICENSE, origin: README, section "Donor and pin".
 //
-// Источник — два файла донора, слитых здесь в один (граница между ними у донора
-// проходила по Vue-виджету, которого у нас нет):
+// Source: two donor files, merged here into one (in the donor, the border between them
+// was a Vue widget, which we do not have):
 //   renderer/src/web/price-check/trade/RateLimiter.ts  → RateLimiter, ResourceHandle
 //   renderer/src/web/price-check/trade/common.ts:37-140 → RATE_LIMIT_RULES,
 //                                                         adjustRateLimits, preventQueueCreation
 //
-// Алгоритм не тронут — он и есть то, ради чего заимствование: лимиты GGG не обходятся,
-// а зеркалятся. Клиент стартует с консервативных 1 запрос / 5 с на группу, после каждого
-// ответа читает `x-rate-limit-rules` и `x-rate-limit-<rule>[-state]` и ПЕРЕСОБИРАЕТ свои
-// лимитеры под объявленное сервером, прожигая расхождение вхолостую. Свой наивный
-// лимитер — это заявка на бан.
+// The algorithm is unchanged. It is the reason for the borrowing: GGG limits are not bypassed,
+// they are mirrored. The client starts with a conservative 1 request / 5 s per group. After each
+// response it reads `x-rate-limit-rules` and `x-rate-limit-<rule>[-state]` and REBUILDS its
+// limiters to what the server declared, burning the difference idle. A naive limiter of our own
+// is a request to get banned.
 //
-// Отличия от донора, все вынужденные:
-//   1. `shallowReactive([])` / `shallowRef(0)` → обычный массив и число. Реактивность
-//      нужна была виджету RateLimiterState.vue; Vue у нас нет.
-//   2. `AppConfig('price-check')!.apiLatencySeconds` → аргумент `desyncFixSeconds`.
-//      Поправка на рассинхрон часов остаётся, конфиг донора — нет.
-//   3. Индексы массивов с `!`: у нас `noUncheckedIndexedAccess`, у донора нет.
-//      Инварианты те же, что и были неявными: если лимитер исчерпан, stack[0] существует.
+// Differences from the donor, all forced:
+//   1. `shallowReactive([])` / `shallowRef(0)` -> a plain array and a number. Reactivity
+//      was for the RateLimiterState.vue widget; we have no Vue.
+//   2. `AppConfig('price-check')!.apiLatencySeconds` -> the `desyncFixSeconds` argument.
+//      The clock desync correction stays, the donor config does not.
+//   3. Array indexes with `!`: we have `noUncheckedIndexedAccess`, the donor does not.
+//      The invariants are the same as the implicit ones: if a limiter is exhausted, stack[0] exists.
 //
-// Не заимствованы: Cache (TTL ответов) и artificial-slowdown — понадобятся, когда
-// появится тот, кто дёргает фильтры.
+// Not borrowed: Cache (response TTL) and artificial-slowdown. They will be needed when
+// something appears that calls the filters.
 
-/** Одна выданная «единица» лимита: живёт `window` секунд и сама уходит из стека. */
+/** One issued "unit" of a limit: it lives `window` seconds and leaves the stack by itself. */
 class ResourceHandle {
   public borrowedAt: number
   public releasedAt: number
@@ -186,8 +186,8 @@ export class RateLimiter {
 }
 
 /**
- * Три группы лимитов trade API. Стартовые значения — консервативные: пока сервер
- * не объявил свои, клиент считает себя ограниченным одним запросом в 5 секунд.
+ * Three limit groups of the trade API. Start values are conservative: until the server
+ * declares its own, the client thinks it is limited to one request per 5 seconds.
  */
 export const RATE_LIMIT_RULES = {
   SEARCH: new Set([new RateLimiter(1, 5)]),
@@ -209,15 +209,15 @@ export function resetRateLimits (): void {
 }
 
 /**
- * Поправка на рассинхрон часов между нами и сервером, секунды. У донора приезжала
- * из конфига виджета (`apiLatencySeconds`), у нас — аргумент со значением донора.
+ * Correction for clock desync between us and the server, in seconds. In the donor it came
+ * from the widget config (`apiLatencySeconds`); here it is an argument with the donor value.
  */
 export const DEFAULT_DESYNC_FIX = 0.05
 
 /**
- * Пересобирает набор лимитеров под то, что объявил сервер в заголовках ответа.
- * Нет заголовка `x-rate-limit-rules` — нечего и подстраивать (у не-trade эндпойнтов
- * своя политика, например `ladder-view` на `/api/leagues`).
+ * Rebuilds the set of limiters to what the server declared in the response headers.
+ * No `x-rate-limit-rules` header means nothing to adjust (non-trade endpoints have
+ * their own policy, for example `ladder-view` on `/api/leagues`).
  */
 export function adjustRateLimits (
   clientLimits: Set<RateLimiter>,
@@ -270,8 +270,8 @@ function _adjustRateLimits (
     const delta = (serverLimit.state - limit.stack.length)
 
     if (delta > 0) {
-      // Сервер считает нас более занятыми, чем мы себя. Прожигаем разницу вхолостую,
-      // чтобы клиент никогда не считал себя свободнее сервера.
+      // The server thinks we are busier than we think. Burn the difference idle,
+      // so that the client never thinks it is freer than the server.
       for (let i = 0; i < Math.min(delta, limit.available); ++i) {
         void limit.wait()
       }
@@ -295,8 +295,8 @@ function _adjustRateLimits (
 }
 
 /**
- * Бросает «Retry after N seconds» вместо молчаливой очереди дольше 1.5 с — чтобы
- * пользователь видел отказ сразу, а не ждал в тишине.
+ * Throws "Retry after N seconds" instead of a silent queue longer than 1.5 s, so that
+ * the user sees the refusal at once and does not wait in silence.
  */
 export function preventQueueCreation (targets: Array<{ count: number, limiters: Iterable<RateLimiter> }>) {
   const estimatedMillis = Math.max(...targets.map(target => {

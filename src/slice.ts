@@ -1,34 +1,34 @@
-// Сквозной срез: кнопка Deck → хоткей gamescope → буфер обмена → парсер донора → лог.
+// End-to-end slice: Deck button → gamescope hotkey → clipboard → donor parser → log.
 //
-// Выход из эпика ввода. Оверлея и trade API здесь нет намеренно —
-// доказывается путь ввода, а не интерфейс.
+// The exit of the input epic. There is no overlay and no trade API here on purpose:
+// the input path is proven, not the interface.
 //
-// Цепочка целиком; каждое звено проверено порознь на живом Deck (стадия 1),
-// этот файл их соединяет:
+// The whole chain; each link was checked separately on a live Deck (stage 1),
+// and this file connects them:
 //
-//   button_back_left (Steam Input) → Ctrl+Alt+C, ОДИН выход
-//     ├─→ игра кладёт advanced item description в CLIPBOARD          (#52)
-//     └─→ тот же аккорд слышит gamescope_action_binding              (#56)
-//           → читаем CLIPBOARD с сессионного :0 — gamescope мостит
-//             селекшены между своими Xwayland-контекстами            (#45)
-//           → парсер из пина донора разбирает текст
+//   button_back_left (Steam Input) → Ctrl+Alt+C, ONE output
+//     ├─→ the game puts the advanced item description into CLIPBOARD (#52)
+//     └─→ gamescope_action_binding hears the same chord             (#56)
+//           → we read CLIPBOARD from the session :0, gamescope bridges
+//             selections between its Xwayland contexts               (#45)
+//           → the parser from the donor pin parses the text
 //
-// Хоткей слушает не этот файл, а готовый зонд из docs/spikes/gamescope-hotkey:
-// протокол приватный, клиент к нему уже написан на C и проверен на железе.
-// Переписывать его на FFI ради среза незачем — читаем его stdout построчно.
+// This file does not listen to the hotkey itself; the ready probe from docs/spikes/gamescope-hotkey does:
+// the protocol is private, and a client for it is already written in C and checked on hardware.
+// There is no reason to rewrite it with FFI for the slice: we read its stdout line by line.
 //
-// Запуск на Deck (ci/Jenkinsfile.deck, MODE=SLICE):
+// Run on the Deck (ci/Jenkinsfile.deck, MODE=SLICE):
 //   DISPLAY=:0 bun src/slice.ts --seconds 90
 //
-// Переменные окружения:
-//   POE_DECK_PROBE    путь к gs-hotkey-probe (умолчание — как у POE_DECK_CLIP)
-//   POE_DECK_KEYS     аккорд хоткея (умолчание Control_L+Alt_L+C — Steam Input
-//                     шлёт ЛЕВЫЙ Control, сравнение наборов точное)
-//   POE_DECK_CLIP     путь к gs-clip (умолчание рядом с собранным демоном или
+// Environment variables:
+//   POE_DECK_PROBE    path to gs-hotkey-probe (default: as for POE_DECK_CLIP)
+//   POE_DECK_KEYS     hotkey chord (default Control_L+Alt_L+C: Steam Input
+//                     sends the LEFT Control, and the set comparison is exact)
+//   POE_DECK_CLIP     path to gs-clip (default: next to the built daemon or
 //                     ~/poe-deck-tools/gs-clip)
-//   POE_DECK_TOOLBOX  distrobox с xclip — запасной путь, если gs-clip нет (gs-probe)
-//   POE_DECK_DUMP     каталог, куда класть сырые буферы фикстурами (пусто = не класть)
-//   DISPLAY           дисплей сессии; буфер читается с него, а не с дисплея игры
+//   POE_DECK_TOOLBOX  distrobox with xclip, a fallback if there is no gs-clip (gs-probe)
+//   POE_DECK_DUMP     directory to store raw clipboards as fixtures (empty = do not store)
+//   DISPLAY           session display; the clipboard is read from it, not from the game display
 
 import { existsSync } from 'node:fs'
 import { loadDonorParser } from './donor'
@@ -37,22 +37,22 @@ import { toolPath } from './runtime'
 
 const TOOLBOX = process.env.POE_DECK_TOOLBOX ?? 'gs-probe'
 
-/** Строка срабатывания зонда хоткея: `  ★ [Control_L+Alt_L+C] #1  seq=…`. */
+/** A trigger line of the hotkey probe: `  ★ [Control_L+Alt_L+C] #1  seq=…`. */
 export function isTriggerLine (line: string): boolean {
   return line.includes('★')
 }
 
 /**
- * Advanced item description — то, ради чего читается `Ctrl+Alt+C`, а не `Ctrl+C`:
- * без него предмет приезжает без модов, парсер молча вернёт пустой statsByType,
- * и срез выглядел бы рабочим, не будучи им.
+ * The advanced item description is why we read `Ctrl+Alt+C` and not `Ctrl+C`:
+ * without it the item arrives without mods, the parser silently returns an empty statsByType,
+ * and the slice would look working without being so.
  *
- * Признак блока взят у донора, не выдуман — `advanced-mod-desc.ts:111-113`:
+ * The block marker is taken from the donor, not made up: `advanced-mod-desc.ts:111-113`:
  * `isModInfoLine = line.startsWith('{') && line.endsWith('}')`.
  */
 export function hasAdvancedBlock (text: string): boolean {
   return text.split('\n').some(line => {
-    const trimmed = line.trim() // заодно режет \r: текст приезжает через Proton
+    const trimmed = line.trim() // also cuts \r: the text arrives through Proton
     return trimmed.length > 1 && trimmed.startsWith('{') && trimmed.endsWith('}')
   })
 }
@@ -67,7 +67,7 @@ interface LoggedItem {
   }>
 }
 
-/** Что печатается в лог по разобранному предмету. Ради этих строк весь срез. */
+/** What goes to the log for a parsed item. The whole slice exists for these lines. */
 export function formatItem (item: LoggedItem): string[] {
   const head = [item.rarity, item.info.name ?? item.info.refName]
     .filter(Boolean)
@@ -75,9 +75,9 @@ export function formatItem (item: LoggedItem): string[] {
   const lines = [`item: ${head || '(unnamed)'}  ilvl ${item.itemLevel ?? '-'}`]
 
   if (!item.statsByType.length) {
-    // Предмет без модов — нормальное состояние, а не сбой копирования: у валюты,
-    // ключей, карт и неопознанных модов не бывает вовсе, и прайс-чек им нужен
-    // ровно так же — по имени и базе, а не по модам.
+    // An item without mods is a normal state, not a copy failure: currency,
+    // keys, maps and unidentified items have no mods at all, and they need the price check
+    // just the same, by name and base, not by mods.
     lines.push('  no mods — normal for currency, keys and unidentified items')
     return lines
   }
@@ -91,13 +91,13 @@ export function formatItem (item: LoggedItem): string[] {
 export type ClipboardReader = 'gs-clip' | 'xclip' | 'distrobox'
 
 /**
- * Чем читать X11 CLIPBOARD. Основной путь — свой `gs-clip` (src/render/gs-clip.c):
- * только libX11, которая есть на стоковом rootfs, без контейнера.
+ * What reads the X11 CLIPBOARD. The main path is our own `gs-clip` (src/render/gs-clip.c):
+ * only libX11, which is on the stock rootfs, no container.
  *
- * `xclip` остался запасным: на стоковой SteamOS его нет и не будет — rootfs
- * read-only, штатное место инструмента — distrobox (то же решение, что в
- * tools/probe-deck-input.sh). Запасной путь нужен разработчику, у которого
- * читалка ещё не собрана, а не игроку.
+ * `xclip` stays as a fallback: stock SteamOS does not have it and never will, the rootfs
+ * is read-only, and the standard place for the tool is distrobox (the same decision as in
+ * tools/probe-deck-input.sh). The fallback is for a developer whose
+ * reader is not built yet, not for the player.
  */
 export function clipboardReader (helperExists: boolean, has: (cmd: string) => boolean): ClipboardReader | null {
   if (helperExists) return 'gs-clip'
@@ -107,11 +107,11 @@ export function clipboardReader (helperExists: boolean, has: (cmd: string) => bo
 }
 
 /**
- * Команда чтения для выбранного пути.
+ * The read command for the chosen path.
  *
- * `timeout` у xclip не украшение: он висит вечно, если владелец селекшена не
- * отвечает, а первый `distrobox enter` ещё и поднимает контейнер. У `gs-clip`
- * срок свой, внутри, — внешний `timeout` ему не нужен.
+ * `timeout` on xclip is not decoration: xclip hangs forever if the selection owner does not
+ * answer, and the first `distrobox enter` also starts the container. `gs-clip`
+ * has its own deadline inside, so it does not need an outer `timeout`.
  */
 export function clipboardCommand (reader: ClipboardReader, display: string, helper: string): string[] {
   switch (reader) {
@@ -125,15 +125,15 @@ export function clipboardCommand (reader: ClipboardReader, display: string, help
   }
 }
 
-/** Путь к `gs-clip`: рядом с собранным демоном или в ~/poe-deck-tools. */
+/** Path to `gs-clip`: next to the built daemon or in ~/poe-deck-tools. */
 export const clipHelperPath = (): string => toolPath('gs-clip', process.env.POE_DECK_CLIP)
 
-/** Каким путём сейчас читается буфер — для строки в журнале на старте. */
+/** Which path reads the clipboard now, for the log line at start. */
 export function currentClipboardReader (): ClipboardReader | null {
   return clipboardReader(existsSync(clipHelperPath()), cmd => Bun.which(cmd) !== null)
 }
 
-/** Чтение X11 CLIPBOARD. Пустая строка — буфер пуст, нечитаем или читать нечем. */
+/** Reads the X11 CLIPBOARD. An empty string means the clipboard is empty, unreadable or there is nothing to read it with. */
 export async function readClipboard (display: string): Promise<string> {
   const reader = currentClipboardReader()
   if (!reader) return ''
@@ -148,19 +148,19 @@ export async function readClipboard (display: string): Promise<string> {
 }
 
 /**
- * Игра кладёт текст в буфер асинхронно, поэтому читать сразу по событию
- * `triggered` нельзя (разведка ввода, § 3.3). Ждём смены — но **не требуем** её.
+ * The game puts the text into the clipboard asynchronously, so we cannot read right on the
+ * `triggered` event (input recon, § 3.3). We wait for a change, but **do not require** it.
  *
- * Прогон #63 стоил ровно этой разницы: предмет копировался тот же, что уже
- * лежал в буфере, текст совпал побайтово, и срез шесть раз подряд сообщил
- * «игра предмет не отдала», хотя она его отдавала. Смена буфера — признак
- * свежести, а не признак того, что копирование состоялось.
+ * Run #63 cost exactly this difference: the item copied was the same one that was already
+ * in the clipboard, the text matched byte for byte, and the slice reported six times in a row
+ * "the game did not give the item", although it did. A clipboard change is a sign
+ * of freshness, not a sign that the copy happened.
  *
- * ponytail: свежесть по совпадению текста не определяется в принципе. Если
- * понадобится отличать новую копию от старой — класть перед вооружением свой
- * маркер и мерить смену относительно него; xclip при этом обязан жить, он
- * ВЛАДЕЕТ селекшеном, и на Deck это уже подводило (tools/probe-deck-input.sh,
- * прогон #52). Срезу такая точность не нужна: ему нужен предмет в логе.
+ * ponytail: freshness cannot be found from matching text in principle. If
+ * we need to tell a new copy from an old one, put our own marker before arming
+ * and measure the change against it; xclip must stay alive for that, because it
+ * OWNS the selection, and on the Deck this already failed (tools/probe-deck-input.sh,
+ * run #52). The slice does not need such precision: it needs the item in the log.
  */
 export async function clipboardAfterTrigger (
   before: string,
@@ -178,9 +178,9 @@ export async function clipboardAfterTrigger (
 }
 
 /**
- * Сырой буфер на диск, если попросили. Фикстуры прайс-чека снимаются с живого
- * Deck и только с него: текст, придуманный за игру, проверяет фантазию автора,
- * а не парсер. Имя — по порядку, содержимое — байт в байт то, что отдала игра.
+ * Raw clipboard to disk, if asked. Price check fixtures are taken from a live
+ * Deck and only from it: text made up for the game checks the fantasy of the author,
+ * not the parser. The name is by order, the content is byte for byte what the game gave.
  */
 export async function dumpBuffer (text: string, index: number): Promise<void> {
   const dir = process.env.POE_DECK_DUMP
@@ -201,9 +201,9 @@ async function main (): Promise<number> {
 
   console.log(`slice: listening for ${keys} (${chord} from a Steam Input button), clipboard from DISPLAY=${display}, ${seconds}s`)
 
-  // Парсер поднимается ДО прослушивания: первый запуск строит бинарные индексы
-  // донора, это секунды. Поднимать его по первому нажатию значило бы потерять
-  // буфер, пока индексы строятся.
+  // The parser starts BEFORE listening: the first start builds the donor binary
+  // indexes, which takes seconds. Starting it on the first press would mean losing
+  // the clipboard while the indexes are built.
   const parser = await loadDonorParser()
   console.log('donor parser loaded from the pin, waiting for a press')
 
@@ -213,23 +213,23 @@ async function main (): Promise<number> {
     stderr: 'inherit'
   })
 
-  // Считаются обе величины, и работой среза считается ПЕРВАЯ. Прайс-чек нужен и
-  // валюте, и ключу, и карте — у них модов нет и не будет, но цена у них есть.
-  // Вторая величина — не критерий, а страховка от Ctrl+C: если за прогон не
-  // приехало ни одного предмета с модами, стоит посмотреть на раскладку кнопки.
+  // Both values are counted, and the FIRST one counts as the slice working. Currency,
+  // keys and maps need the price check too: they have no mods and never will, but they have a price.
+  // The second value is not a criterion but insurance against Ctrl+C: if no
+  // item with mods arrived in a run, look at the button layout.
   let parsed = 0
   let withMods = 0
   let dumped = 0
   let before = await readClipboard(display)
   let tail = ''
 
-  // Что лежит в буфере ДО нажатия — печатается и в зачёт среза не идёт. Смысл
-  // не в предмете, а в том, что прогон без человека у Deck всё равно показывает,
-  // работают ли на устройстве чтение буфера и парсер: иначе «ноль срабатываний»
-  // не отличить от «звено оборвалось раньше».
+  // What is in the clipboard BEFORE the press is printed and does not count for the slice. The point
+  // is not the item, but that a run without a person at the Deck still shows
+  // whether the clipboard read and the parser work on the device: otherwise "zero triggers"
+  // cannot be told apart from "a link broke earlier".
   console.log(`clipboard before the press: ${before ? `${before.split('\n').length} lines, advanced block ${hasAdvancedBlock(before) ? 'present' : 'absent'}` : 'empty'}`)
-  // Он тоже фикстура: предмет, скопированный в прошлом прогоне, — такой же
-  // настоящий буфер с Deck, как и снятый жестом сейчас.
+  // It is a fixture too: an item copied in a previous run is as much
+  // a real clipboard from the Deck as one taken with the gesture now.
   if (before) await dumpBuffer(before, 0)
 
   for await (const chunk of probe.stdout) {
@@ -271,8 +271,8 @@ async function main (): Promise<number> {
   console.log('')
   if (parsed > 0) {
     console.log(`RESULT: the slice works. Items parsed: ${parsed}, of them with mods: ${withMods}.`)
-    // Ноль предметов с модами за прогон — не провал, но и не норма: так выглядит
-    // и связка предметов без модов подряд, и обычный Ctrl+C на раскладке кнопки.
+    // Zero items with mods in a run is not a failure, but it is not normal either: this is how
+    // a series of items without mods looks, and also a plain Ctrl+C on the button layout.
     if (withMods === 0) {
       console.log('      No mod block in the whole run. If any of the items should have had')
       console.log('      mods, check the button layout in Steam Input.')

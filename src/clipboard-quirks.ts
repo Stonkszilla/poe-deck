@@ -1,15 +1,15 @@
-// Поправки к тексту буфера, которых парсер пина ещё не знает.
+// Fixes to the clipboard text that the pinned parser does not know yet.
 //
-// Справочники мы догоняем генератором (`tools/datagen/`), а парсер — код
-// донора, и мы его не правим. Когда лига приносит предмет новой формы, текст
-// буфера приводится здесь к форме, которую парсер пина уже умеет читать.
-// Правило живёт, пока донор не научится сам; после бампа пина его надо
-// проверить и, скорее всего, удалить.
+// We catch up the reference data with a generator (`tools/datagen/`), but the
+// parser is donor code, and we do not edit it. When a league brings an item of a
+// new shape, this module converts the clipboard text to a shape that the pinned
+// parser can already read. A rule lives until the donor learns it; after a pin
+// bump, check the rule and most likely remove it.
 //
-// Сейчас правил нет. Последнее — Viscera (Covens, 3.30: буфер без `Rarity:`,
-// имя с `Lesser`/`Greater`) — удалено с бампом пина до v3.30.102: донор
-// разбирает Viscera сам. Базу Viscera для запроса трейда берёт
-// `visceraBase` в `./trade/query.ts`.
+// There are no rules now. The last one, Viscera (Covens, 3.30: clipboard without
+// `Rarity:`, name with `Lesser`/`Greater`), was removed with the pin bump to
+// v3.30.102: the donor parses Viscera itself. The Viscera base for the trade
+// query comes from `visceraBase` in `./trade/query.ts`.
 
 export function normalizeClipboard (text: string): string {
   return text

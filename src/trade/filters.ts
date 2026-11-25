@@ -1,49 +1,49 @@
-// Моды предмета как список фильтров, которым можно управлять.
+// The mods of an item as a list of filters that the player can control.
 //
-// До этого файла состав запроса был функцией предмета: `statFilters`
-// решала за игрока, какие моды поедут в поиск, и исправить её выбор было нечем.
-// На Impresence это давало два фильтра, шесть модов вне запроса и одно
-// объявление за 40 chaos — цену базы, выданную за цену конкретного предмета.
+// Before this file, the query contents were a function of the item: `statFilters`
+// decided for the player which mods went into the search, and nothing could correct that choice.
+// On Impresence this gave two filters, six mods outside the query and one
+// listing at 40 chaos: the price of the base, shown as the price of this specific item.
 //
-// Здесь тот же выбор становится **начальной настройкой**: каждый распознанный
-// мод виден строкой, у строки есть фактический ролл, состояние участия в поиске
-// и границы min/max. Автоматические умолчания не меняются (см. `defaultEnabled`),
-// поэтому запрос без правок игрока остаётся тем же, что и до этого файла —
-// `statFilters` теперь выражается через эти умолчания, а не отдельным правилом.
+// Here the same choice becomes the **initial setting**: each recognised
+// mod shows as a row, and the row has the actual roll, a search participation state
+// and min/max bounds. The automatic defaults do not change (see `defaultEnabled`),
+// so a query without edits by the player stays the same as before this file:
+// `statFilters` is now expressed through these defaults, not through a separate rule.
 //
-// Правила умолчаний взяты у донора идеей, кодом ничего не заимствовано:
+// The default rules come from the donor as an idea, no code is borrowed:
 // SnosMe/awakened-poe-trade (MIT), `create-stat-filters.ts:98-103`, `percentRoll`.
 
 import { isMapItem, type PricedItem, type StatEntryFilter } from './query'
 
-/** Минус сколько процентов от ролла ставится в min фильтра. Умолчание донора. */
+/** How many percent of the roll to subtract for the filter min. Donor default. */
 export const SEARCH_RANGE_PERCENT = 10
 
 /**
- * Чем мод редактируется. Флагу и варианту числовой диапазон придумывать нельзя:
- * на трейде у первого нет значения вовсе, у второго это выбор, а не интервал.
+ * How a mod is edited. A flag and a variant must not get an invented numeric range:
+ * on trade the first has no value at all, and for the second it is a choice, not an interval.
  */
 export type ModKind = 'range' | 'flag' | 'option'
 
 export interface ModFilter {
-  /** id фильтра на трейде. Нет — искать по этому моду нечем. */
+  /** Filter id on trade. If absent, there is nothing to search this mod by. */
   id?: string
   /**
-   * Тот же мод под остальными типами трейда. Буфер называет один тип, индекс
-   * трейда может держать мод под другим — см. `tradeIds` ниже.
+   * The same mod under the other trade types. The clipboard names one type, the trade
+   * index can keep the mod under another one; see `tradeIds` below.
    */
   altIds?: string[]
-  /** Почему мод недоступен для поиска. Есть ровно тогда, когда нет `id`. */
+  /** Why the mod is not available for search. Present exactly when `id` is absent. */
   unavailable?: string
-  /** Текст мода с подставленным фактическим роллом — то, что читает игрок. */
+  /** Mod text with the actual roll filled in: what the player reads. */
   label: string
-  /** ModifierType донора: explicit | implicit | enchant | fractured | crafted | … */
+  /** Donor ModifierType: explicit | implicit | enchant | fractured | crafted | … */
   type: string
   tier?: number
   kind: ModKind
-  /** Фактический ролл на предмете. У флага его нет. */
+  /** Actual roll on the item. A flag has none. */
   roll?: number
-  /** Вариант мода для `kind: 'option'` — на трейде это выбор, не интервал. */
+  /** Mod variant for `kind: 'option'`: on trade this is a choice, not an interval. */
   option?: number
   enabled: boolean
   min?: number
@@ -51,17 +51,17 @@ export interface ModFilter {
 }
 
 /**
- * Фиксированные свойства защиты — броня, уклонение, щит, вард, блок.
+ * Fixed defence properties: armour, evasion, energy shield, ward, block.
  *
- * Донор держит их отдельным слоем: это не моды, а свойства предмета, и на
- * трейде они живут не в `stats`, а в `query.filters.armour_filters`
- * (`pathofexile-trade.ts:452-473`). Внутри себя донор называет их псевдо-статами
- * `item.armour`, `item.evasion_rating`, … — то же имя берём и мы, чтобы строка
- * редактора и поле запроса назывались одинаково.
+ * The donor keeps them as a separate layer: they are not mods but item properties, and on
+ * trade they live not in `stats` but in `query.filters.armour_filters`
+ * (`pathofexile-trade.ts:452-473`). Internally the donor calls them pseudo stats
+ * `item.armour`, `item.evasion_rating`, … We take the same name, so that the editor
+ * row and the query field have the same name.
  *
- * Зачем они в редакторе: у брони с хорошей базой цена определяется числом ES или
- * брони, а не модами, и без этих строк искать по ним было нечем (претензия
- * тестера после прогона #107 — «фикс статы шмоток, по ним тоже возможен поиск»).
+ * Why they are in the editor: for armour with a good base, the price depends on the ES or
+ * armour number, not on mods, and without these rows there was no way to search by them
+ * (tester complaint after run #107: "fixed item stats, search by them is also possible").
  */
 const PROPERTIES: Array<{ id: string, label: string, of: (item: PricedItem) => number | undefined }> = [
   { id: 'item.armour', label: 'Armour', of: item => item.armourAR },
@@ -71,19 +71,19 @@ const PROPERTIES: Array<{ id: string, label: string, of: (item: PricedItem) => n
   { id: 'item.block', label: 'Chance to Block', of: item => item.armourBLOCK }
 ]
 
-/** Сколько процентов качества трейд подставляет в физ. урон оружия. */
+/** The quality percent that trade applies to the physical damage of a weapon. */
 const DPS_QUALITY = 20
 
 /**
- * Физический урон за удар, приведённый к качеству 20%. Трейд считает `pdps`
- * именно так: замер 09.11 на Vaal Axe с качеством 3% — `226-373` при 1.30 атаки
- * в секунду дают 389 по буферу и 453.7 в `extended.pdps` трейда, ровно ×120/103.
- * Без поправки граница фильтра на предмете ниже 20% качества стояла бы ниже, чем
- * трейд считает этот же предмет, и ловила бы оружие слабее.
+ * Physical damage per hit, normalised to 20% quality. Trade calculates `pdps`
+ * exactly this way: measurement on 09.11 on a Vaal Axe with 3% quality: `226-373` at 1.30 attacks
+ * per second give 389 by the clipboard and 453.7 in `extended.pdps` of trade, exactly ×120/103.
+ * Without the correction, the filter bound on an item below 20% quality would be lower than
+ * the value trade calculates for the same item, and would catch weaker weapons.
  *
- * Качество и локальное «increased Physical Damage» складываются в один множитель,
- * поэтому их сумма и делит, и умножает. Идея — `propAt20Quality` донора
- * (`parser/calc-q20.ts:47-65`), код свой.
+ * Quality and local "increased Physical Damage" add up into one multiplier,
+ * so their sum both divides and multiplies. The idea is `propAt20Quality` of the donor
+ * (`parser/calc-q20.ts:47-65`), the code is our own.
  */
 export function physicalAtQ20 (item: PricedItem): number | undefined {
   if (item.weaponPHYSICAL == null) return undefined
@@ -96,16 +96,16 @@ export function physicalAtQ20 (item: PricedItem): number | undefined {
   return item.weaponPHYSICAL * (100 + increased + DPS_QUALITY) / (100 + increased + quality)
 }
 
-/** До десятых: так dps показывает и трейд. */
+/** To tenths: trade shows dps the same way. */
 function dpsValue (value: number): number {
   return Math.round(value * 10) / 10
 }
 
 /**
- * Средний хаос-урон за удар из строки буфера `Chaos Damage: 98-120`. Парсер донора
- * эту строку не разбирает (`Parser.ts`, `parseWeapon`), а трейд хаос в `dps`
- * считает. Замер 09.11, Rebuke of the Vaal: `pdps 304.41 + edps 391.28` и хаос
- * 91-140 при 1.46 атаки в секунду дают ровно `dps 864.32` трейда.
+ * Average chaos damage per hit from the clipboard line `Chaos Damage: 98-120`. The donor parser
+ * does not parse this line (`Parser.ts`, `parseWeapon`), but trade counts chaos in `dps`.
+ * Measurement on 09.11, Rebuke of the Vaal: `pdps 304.41 + edps 391.28` and chaos
+ * 91-140 at 1.46 attacks per second give exactly `dps 864.32` of trade.
  */
 export function chaosPerHit (item: PricedItem): number | undefined {
   const match = /^Chaos Damage: (\d+)-(\d+)/m.exec(item.rawText ?? '')
@@ -114,14 +114,14 @@ export function chaosPerHit (item: PricedItem): number | undefined {
 }
 
 /**
- * Строки dps оружия. Порядок и условия — как у донора (`item-property.ts:145-210`):
- * `Total DPS` только у оружия с двумя видами урона и больше, иначе он равен
- * единственному из них и дублирует строку. Стихийный урон к качеству не
- * приводится — трейд его тоже не приводит (`edps` в том же замере равен буферу).
+ * Weapon dps rows. Order and conditions are as in the donor (`item-property.ts:145-210`):
+ * `Total DPS` only for a weapon with two or more damage kinds, otherwise it equals
+ * the single one and duplicates its row. Elemental damage is not normalised to quality:
+ * trade does not normalise it either (`edps` in the same measurement equals the clipboard).
  *
- * От донора отличается хаосом: у донора `Total DPS` — физ. и стихии, у трейда
- * `dps` — ещё и хаос. Отдельного фильтра хаоса на трейде нет, поэтому хаос
- * входит только в `Total DPS`.
+ * The difference from the donor is chaos: in the donor `Total DPS` is physical plus elemental, in trade
+ * `dps` also includes chaos. Trade has no separate chaos filter, so chaos
+ * goes only into `Total DPS`.
  */
 function weaponFilters (item: PricedItem): Array<{ id: string, label: string, value: number }> {
   if (!item.weaponAS) return []
@@ -141,38 +141,38 @@ function weaponFilters (item: PricedItem): Array<{ id: string, label: string, va
 }
 
 /**
- * Категории, у которых уровень предмета цену не определяет или значит другое.
- * Список — донора (`create-item-filters.ts:347-358`): у карты это тир, у
- * обычного джуела набор аффиксов от уровня не зависит, у чертежей, карт атласа
- * и реликвий свой уровень зоны.
+ * Categories where the item level does not set the price or means something else.
+ * The list is from the donor (`create-item-filters.ts:347-358`): for a map it is the tier, for
+ * a normal jewel the affix pool does not depend on level, blueprints, atlas charts
+ * and relics have their own zone level.
  */
 const NO_ILVL = new Set([
   'Map', 'Jewel', 'Heist Blueprint', 'Heist Contract', 'Chart', 'Memory Line',
   'Sanctum Relic', 'Charm', 'Idol'
 ])
 
-/** Склянки: уровень есть, но цену он почти не двигает — строка видна, но выключена. */
+/** Flasks: the level exists, but it barely moves the price, so the row is visible but off. */
 const ILVL_OFF = new Set(['Flask', 'Tincture'])
 
-/** Выше 86 уровень новых модов не открывает: 86 и 100 — один рынок (правило донора). */
+/** Above 86 the level unlocks no new mods: 86 and 100 are one market (donor rule). */
 const ILVL_CAP = 86
 
 /**
- * Уровень предмета строкой `properties` → `misc_filters.ilvl` трейда (тестер:
- * «ilvl у шмоток — важный аспект»). Нет у уникалов (их уровень цену
- * не меняет, донор его тоже не ставит) и у категорий из `NO_ILVL`.
+ * Item level as a `properties` row → `misc_filters.ilvl` of trade (tester:
+ * "ilvl on gear is an important aspect"). Absent for uniques (their level does not
+ * change the price, and the donor does not set it either) and for categories in `NO_ILVL`.
  *
- * Включён ли — решает `defaultFilters` по остальному набору, а не эта функция:
- * у донора строка включается в режиме поиска базы (`opts.exact`), у нас это
- * тот же случай — ни один мод не вошёл в фильтр, и цена идёт по базе. Тогда
- * ilvl 86 и ilvl 70 — разные базы и разные деньги. Когда в фильтре моды, они
- * уже говорят о предмете больше, чем уровень.
+ * Whether it is on is decided by `defaultFilters` from the rest of the set, not by this function:
+ * in the donor the row turns on in base search mode (`opts.exact`), for us it is
+ * the same case: no mod is in the filter, and the price comes from the base. Then
+ * ilvl 86 and ilvl 70 are different bases and different money. When mods are in the filter, they
+ * already tell more about the item than the level does.
  */
 function itemLevelFilter (item: PricedItem): ModFilter | undefined {
   if (!item.itemLevel || item.rarity === 'Unique') return undefined
   if (isMapItem(item) || (item.category && NO_ILVL.has(item.category))) return undefined
-  // Вне экипировки (валюта, карты гадания, камни) уровня в буфере нет вовсе —
-  // туда эта строка не доходит по первой проверке.
+  // Outside equipment (currency, divination cards, gems) the clipboard has no level at all,
+  // so this row is stopped by the first check.
 
   const cluster = item.category === 'Cluster Jewel'
   const value = cluster ? floorToBracket(item.itemLevel, [1, 50, 68, 75, 84]) : Math.min(item.itemLevel, ILVL_CAP)
@@ -182,31 +182,31 @@ function itemLevelFilter (item: PricedItem): ModFilter | undefined {
     type: 'property',
     kind: 'range',
     roll: value,
-    // Граница — сам уровень, а не ролл минус 10%, как у мода: «ilvl от 66» у
-    // предмета 74 — чужой рынок. Редактор ставит `minRoll` только пустой строке,
-    // поэтому граница задаётся здесь, и включённая на Deck строка уходит как есть.
+    // The bound is the level itself, not roll minus 10% as for a mod: "ilvl from 66" for
+    // an item of level 74 is a different market. The editor sets `minRoll` only on an empty row,
+    // so the bound is set here, and a row turned on at the Deck goes out as is.
     min: value,
     enabled: false,
-    // Кластер-джуел: число пассивов зависит от вилки уровня, и верхняя граница
-    // вилки — такая же часть описания, как нижняя (донор: `ceilToBracket`).
+    // Cluster jewel: the number of passives depends on the level bracket, and the upper bound
+    // of the bracket is as much a part of the description as the lower one (donor: `ceilToBracket`).
     ...(cluster ? { max: ceilToBracket(item.itemLevel, [100, 74, 67, 49]) } : {})
   }
 }
 
-/** Наибольшая ступень, не превышающая значение. */
+/** The largest step that does not exceed the value. */
 function floorToBracket (value: number, brackets: number[]): number {
   return brackets.filter(step => step <= value).at(-1) ?? brackets[0]!
 }
 
-/** Наименьшая ступень (по убыванию списка), не меньшая значения. */
+/** The smallest step (the list is in descending order) that is not less than the value. */
 function ceilToBracket (value: number, brackets: number[]): number {
   return brackets.filter(step => step >= value).at(-1) ?? brackets[0]!
 }
 
 /**
- * Строки свойств предмета: защита у брони и щитов, dps у оружия. У остального
- * список пустой. Все выключены: включённое свойство меняет смысл запроса, и это
- * решение игрока.
+ * Item property rows: defence for armour and shields, dps for weapons. For everything else
+ * the list is empty. All are off: a property that is on changes the meaning of the query, and that is
+ * the decision of the player.
  */
 function propertyFilters (item: PricedItem): ModFilter[] {
   const weapon = weaponFilters(item).map(row => ({
@@ -233,14 +233,14 @@ function propertyFilters (item: PricedItem): ModFilter[] {
 }
 
 /**
- * Порядок групп в редакторе. Свойства сверху — они про сам предмет; дальше то,
- * что игрок читает в описании в том же порядке, в каком PoE это печатает.
- * Группировка визуальная, на запрос не влияет: панель рисует заголовок там, где
- * тип сменился, и для этого список должен быть отсортирован здесь, а не в ней.
+ * Group order in the editor. Properties go on top, because they are about the item itself; then comes what
+ * the player reads in the description, in the same order in which PoE prints it.
+ * The grouping is visual and does not affect the query: the panel draws a header where
+ * the type changes, and for this the list must be sorted here, not in the panel.
  */
 const GROUP_ORDER = ['property', 'enchant', 'implicit', 'fractured', 'explicit', 'crafted']
 
-/** Подписи групп в редакторе. Тип, которого здесь нет, называется как есть. */
+/** Group labels in the editor. A type that is not here is shown as is. */
 const GROUP_LABEL: Record<string, string | undefined> = {
   property: 'properties',
   enchant: 'enchant',
@@ -259,13 +259,13 @@ export function groupRank (type: string): number {
   return at === -1 ? GROUP_ORDER.length : at
 }
 
-/** Суммарный ролл мода по всем источникам — `statSourcesTotal(sources, 'sum')` донора. */
+/** Total roll of a mod across all sources: `statSourcesTotal(sources, 'sum')` of the donor. */
 export function rollValue (sources: PricedItem['statsByType'][number]['sources']): number | undefined {
   if (sources.every(source => !source.contributes)) return undefined
   return sources.reduce((sum, source) => sum + (source.contributes?.value ?? 1), 0)
 }
 
-/** Ролл минус 10%, вниз. Целые остаются целыми, дробные режутся до сотых. */
+/** Roll minus 10%, rounded down. Integers stay integers, fractions are cut to hundredths. */
 export function minRoll (value: number): number {
   const lowered = value - Math.abs(value) * SEARCH_RANGE_PERCENT / 100
   return Number.isInteger(value)
@@ -273,15 +273,15 @@ export function minRoll (value: number): number {
     : Math.floor((lowered + Number.EPSILON) * 100) / 100
 }
 
-/** Число для человека: целое остаётся целым, дробное режется до сотых. */
+/** A number for a human: an integer stays an integer, a fraction is cut to hundredths. */
 export function rollText (value: number): string {
   return String(Number(value.toFixed(2)))
 }
 
 /**
- * Мод с подставленным роллом. У донора в `stat.ref` стоят `#` — один на обычный
- * мод, два на «Adds # to # Physical Damage». Подставляем только когда место одно:
- * иначе сумма двух чисел, разложенная по двум местам, соврала бы дважды.
+ * Mod with the roll filled in. In the donor `stat.ref` contains `#`: one for a normal
+ * mod, two for "Adds # to # Physical Damage". We fill in only when there is one place:
+ * otherwise the sum of two numbers spread over two places would lie twice.
  */
 export function modLabel (ref: string, roll?: number): string {
   if (roll === undefined) return ref
@@ -290,56 +290,71 @@ export function modLabel (ref: string, roll?: number): string {
 }
 
 /**
- * Начальное участие мода в поиске. Здесь и только здесь живут умолчания донора:
+ * Initial search participation of a mod. The donor defaults live here and only here:
  *
- *   1. из explicit в фильтр идут только верхние тиры (≤ 2) — иначе шесть модов
- *      редкого предмета сойдутся ровно в один листинг, его же;
- *   2. остальные типы (implicit, enchant, fractured, crafted) идут целиком;
- *   3. **у уникала не включается ничего.**
+ *   1. from explicit, only top tiers (≤ 2) go into the filter; otherwise six mods
+ *      of a rare item narrow down to exactly one listing, the item itself;
+ *   2. the other types (implicit, enchant, fractured, crafted) go in fully;
+ *   3. **for a unique, nothing is turned on.**
  *
- * Правило 3 стоило двух прогонов. У уникала предмет однозначно опознаётся
- * именем, а его врождённые моды на трейде индексируются НЕ ТЕМ типом, каким их
- * называет буфер: мод, который в описании предмета идёт имплицитом, на трейде
- * живёт как explicit, и `implicit.stat_…` не находит ничего. На прогоне #104
- * так молча пустели и Ambu's Charge, и Soul Mantle — оба «с модами (1 в
- * фильтре)» и оба «ни одного объявления», при исправной лиге и живом трейде.
+ * Rule 3 cost two runs. A unique item is identified unambiguously by its
+ * name, and trade indexes its innate mods under a DIFFERENT type than the one
+ * the clipboard uses: a mod that the item description shows as implicit lives on trade
+ * as explicit, and `implicit.stat_…` finds nothing. In run #104
+ * Ambu's Charge and Soul Mantle both went empty silently this way: both "with mods (1 in
+ * filter)" and both "no listings", with a correct league and a live trade.
  *
- * Донор приходит к тому же с другой стороны: `hideNotVariableStat` у уникала
- * скрывает и выключает фильтр без диапазона ролла — а врождённые моды уникала
- * как раз константные (`create-stat-filters.ts:371-385`).
+ * The donor comes to the same result from the other side: for a unique, `hideNotVariableStat`
+ * hides and turns off a filter without a roll range, and the innate mods of a unique
+ * are exactly the constant ones (`create-stat-filters.ts:371-385`).
  *
- * Выключены — не значит потеряны: в редакторе они все на месте, и игрок
- * включает их сам, когда цена по имени его не устраивает.
+ * Off does not mean lost: in the editor they are all in place, and the player
+ * turns them on when the price by name does not suit them.
  */
-function defaultEnabled (type: string, tier: number | undefined, unique: boolean, map: boolean): boolean {
-  // Моды карты — это модификаторы зоны («Monsters deal 102% extra Physical
-  // Damage as Cold»), и искать по ним бессмысленно: карта стоит тиром и, изредка,
-  // парой ключевых модов, которые игрок выберет сам. Прогон #115: девять
-  // включённых модов давали ноль на каждой карте.
-  if (map) return false
+function defaultEnabled (
+  type: string,
+  kind: ModKind,
+  tier: number | undefined,
+  unique: boolean,
+  map: boolean
+): boolean {
+  // Map mods are zone modifiers ("Monsters deal 102% extra Physical
+  // Damage as Cold"), and a search by them makes no sense: a map is priced by tier and, sometimes,
+  // by a few key mods that the player selects. Run #115: nine
+  // mods turned on gave zero on every map.
+  //
+  // The exception is an implicit without a number. It is not a zone modifier, but WHAT the map is:
+  // whose influence is on it and who occupies it. An Elder guardian map has `Area is influenced
+  // by The Elder` and `Map is occupied by The Enslaver`, a Conqueror map has `Map
+  // contains Baran's Citadel`, and both have the same base `Map (Tier 16)` as a normal
+  // map. Without these rows in the query, a guardian map gets the price of any T16. Measurement on the
+  // live API (22.11, league Covens, T16, instant buyout): normal is 2 chaos,
+  // Elder with Enslaver is 9, Baran's Citadel is 33. The criterion is the mod form, not a list
+  // of names: the influence of the next league will come in the same form.
+  if (map) return type === 'implicit' && kind === 'flag'
   if (unique) return false
   if (type !== 'explicit') return true
   return tier != null && tier <= 2
 }
 
 /**
- * Все id мода на трейде: свой тип первым, остальные — запасными.
+ * All trade ids of a mod: its own type first, the others as fallbacks.
  *
- * Донор шлёт в запрос весь массив id СВОЕГО типа (`everyTradeIdToQuery`,
- * `pathofexile-trade.ts:902-905`), и это правило мы повторяем. Чужие типы едут
- * только тогда, когда своего нет вовсе: замер на живом трейде (15.09) показал,
- * что id своего типа верен — `implicit.stat_825352061` у Ambu's Charge находит
- * 125 объявлений при `status: any`. Ноль в прогоне #109 давал не тип, а
- * `status: online`: продавцы этого предмета офлайн, и лечится это ветвлением
- * запроса, а не расширением фильтра.
+ * The donor sends the whole id array of ITS OWN type into the query (`everyTradeIdToQuery`,
+ * `pathofexile-trade.ts:902-905`), and we repeat this rule. Other types go
+ * only when the own type is absent: a measurement on live trade (15.09) showed
+ * that the id of the own type is correct: `implicit.stat_825352061` on Ambu's Charge finds
+ * 125 listings with `status: any`. The zero in run #109 came not from the type but from
+ * `status: online`: the sellers of this item are offline, and the fix is a branch of the
+ * query, not a wider filter.
  *
- * Почему не «все типы всегда», как было после #107: каждый мод с несколькими id
- * уезжает отдельной группой `count`, и на пяти включённых модах GGG отвечает
- * «Query is too complex. Please reduce the amount of filters used» (прогон #109,
+ * Why not "all types always", as it was after #107: each mod with several ids
+ * goes as a separate `count` group, and with five mods turned on GGG answers
+ * "Query is too complex. Please reduce the amount of filters used" (run #109,
  * Snowblind Grace).
  *
- * `pseudo` в запасные не берём намеренно: это агрегат («суммарное сопротивление»),
- * и подставлять ему границу конкретного мода — врать о том, что ищем.
+ * We deliberately do not take `pseudo` as a fallback: it is an aggregate ("total resistance"),
+ * and giving it the bound of a specific mod would lie about what we search for.
  */
 function tradeIds (
   trade: PricedItem['statsByType'][number]['stat']['trade'],
@@ -354,17 +369,17 @@ function tradeIds (
   return { id: rest[0], alt: rest.slice(1) }
 }
 
-/** Минимальный (лучший) тир среди источников мода. */
+/** The minimum (best) tier among the mod sources. */
 function bestTier (sources: PricedItem['statsByType'][number]['sources']): number | undefined {
   const tiers = sources.map(s => s.modifier.info.tier).filter((t): t is number => t != null)
   return tiers.length ? Math.min(...tiers) : undefined
 }
 
 /**
- * Все распознанные моды предмета строками редактора — включая те, по которым
- * поиск невозможен: мод, пропавший молча, для игрока неотличим от мода, который
- * учтён. Пустой список — законное состояние, а не сбой: у валюты, карты и ключа
- * модов нет и не будет.
+ * All recognised item mods as editor rows, including the ones that cannot be
+ * searched: for the player, a mod that disappears silently looks the same as a mod that
+ * is counted. An empty list is a valid state, not a failure: currency, maps and keys
+ * have no mods and never will.
  */
 export function defaultFilters (item: PricedItem): ModFilter[] {
   const unique = item.rarity === 'Unique'
@@ -390,8 +405,8 @@ export function defaultFilters (item: PricedItem): ModFilter[] {
       return row
     }
     if (kind === 'option') {
-      // Вариант отправляется числом. Не распознали его — отправлять нечего,
-      // и делать вид, что мод учтён, нельзя.
+      // The variant is sent as a number. If it is not recognised, there is nothing to send,
+      // and we must not pretend that the mod is counted.
       if (roll === undefined) {
         row.unavailable = 'mod variant not recognised'
         return row
@@ -401,15 +416,15 @@ export function defaultFilters (item: PricedItem): ModFilter[] {
 
     row.id = id
     if (alt.length) row.altIds = alt
-    row.enabled = defaultEnabled(calc.type, tier, unique, map)
+    row.enabled = defaultEnabled(calc.type, kind, tier, unique, map)
     if (kind === 'range' && row.enabled) row.min = minRoll(roll!)
     return row
   })
 
-  // Сортировка стабильная: внутри группы порядок остаётся тем, в каком моды
-  // стоят на предмете, — игрок сверяет список с описанием в игре построчно.
-  // Уровень предмета включается, когда цена идёт по базе: ни один мод не вошёл
-  // в фильтр. Склянки — исключение донора: строка есть, но выключена.
+  // The sort is stable: inside a group the order stays the same as the order of the mods
+  // on the item, because the player compares the list with the in-game description line by line.
+  // The item level is turned on when the price comes from the base: no mod is in
+  // the filter. Flasks are a donor exception: the row exists, but it is off.
   const ilvl = itemLevelFilter(item)
   if (ilvl && !mods.some(row => row.enabled) && !ILVL_OFF.has(item.category ?? '')) {
     ilvl.enabled = true
@@ -422,11 +437,11 @@ export function defaultFilters (item: PricedItem): ModFilter[] {
 }
 
 /**
- * Что не так со строкой. Пустой ответ — строку можно отправлять.
+ * What is wrong with the row. An empty answer means the row can be sent.
  *
- * Границы проверяются здесь, а не в построении запроса: игрок правит их по
- * одной, и min > max — нормальное промежуточное состояние черновика. Запретить
- * надо не ввод, а отправку такого фильтра в поиск.
+ * The bounds are checked here, not when the query is built: the player edits them one
+ * at a time, and min > max is a normal intermediate state of the draft. What must be blocked
+ * is not the input but sending such a filter to the search.
  */
 export function filterProblem (row: ModFilter): string | undefined {
   if (row.unavailable) return row.unavailable
@@ -435,9 +450,9 @@ export function filterProblem (row: ModFilter): string | undefined {
 }
 
 /**
- * Строки → фильтры запроса. Выключенный мод в запросе отсутствует, включённый
- * доступный — не теряется. Границы едут обе; заданная только одна — тоже
- * законный фильтр, как и включённый мод вообще без границ («такой мод есть»).
+ * Rows → query filters. A mod that is off is absent from the query; an available mod that is on
+ * is not lost. Both bounds go out; a single bound is also a valid filter,
+ * and so is a mod that is on with no bounds at all ("this mod is present").
  */
 export function toStatFilters (rows: ModFilter[]): StatEntryFilter[] {
   const out: StatEntryFilter[] = []
@@ -465,12 +480,12 @@ export function toStatFilters (rows: ModFilter[]): StatEntryFilter[] {
   return out
 }
 
-/** Снимок набора для сравнения: цена относится к тому, что уехало в запрос. */
+/** A snapshot of the set for comparison: the price belongs to what went into the query. */
 export function filterSignature (rows: ModFilter[]): string {
   return JSON.stringify(toStatFilters(rows))
 }
 
-/** Копия строк. Черновик и применённый набор не должны делить объекты. */
+/** A copy of the rows. The draft and the applied set must not share objects. */
 export function copyFilters (rows: ModFilter[]): ModFilter[] {
   return rows.map(row => ({ ...row }))
 }

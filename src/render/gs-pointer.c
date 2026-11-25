@@ -1,39 +1,39 @@
 /*
- * gs-pointer — координаты указателя X-сервера строками в stdout.
+ * gs-pointer — pointer coordinates of an X server as lines on stdout.
  *
- * Замер [#92] нашёл аналоговый канал панели: курсор от левого тачпада
- * живёт на сервере ИГРЫ (`:1`) — 270 движений за 30 с, X 0..967, Y 0..799, —
- * тогда как на сессионном `:0` он всё это время стоял в углу (ADR 0002, Ф11).
- * Значит рисуем по-прежнему на своём сервере, а координаты берём с чужого.
+ * Measurement [#92] found the analog channel of the panel: the cursor from the left trackpad
+ * lives on the GAME server (`:1`) — 270 moves in 30 s, X 0..967, Y 0..799 —
+ * while on the session `:0` it stayed in the corner the whole time (ADR 0002, F11).
+ * So we still draw on our own server, but take the coordinates from the other one.
  *
- * ── Почему отдельный бинарь, а не флаг у gs-panel ───────────────────────────
+ * ── Why a separate binary and not a flag of gs-panel ─────────────────────────
  *
- * Форма взята у `gs-hotkey-probe`: маленький C-клиент читает то, чего не может
- * bun, и печатает строки, которые разбирает демон. Рендерер при этом остаётся
- * с односторонним швом ADR 0003 (`rect`, `text`, `show` внутрь, ничего наружу),
- * и соединение к чужому серверу не примешивается к рисованию на своём.
+ * The shape is taken from `gs-hotkey-probe`: a small C client reads what bun
+ * cannot, and prints lines that the daemon parses. The renderer keeps
+ * the one-way seam of ADR 0003 (`rect`, `text`, `show` in, nothing out),
+ * and the connection to the other server does not mix with drawing on ours.
  *
- * ── Что здесь намеренно не делается ─────────────────────────────────────────
+ * ── What this deliberately does not do ──────────────────────────────────────
  *
- *  - **никакого XTEST и синтетического ввода**: мы читаем, а не двигаем. Синтез
- *    до игры всё равно не доходит (ADR 0002, Ф6);
- *  - **никакого захвата** (`XGrabPointer`): указатель принадлежит игре, отбирать
- *    его нельзя — иначе сломается сама игра;
- *  - **никакой подписки на события**: `XQueryPointer` спрашивает состояние, и
- *    ему не нужны ни фокус, ни доставка событий в наше окно. Ровно поэтому
- *    инвариант «ввод из слоя оверлея не приходит никогда» остаётся в силе.
+ *  - **no XTEST and no synthetic input**: we read, we do not move. Synthetic
+ *    input does not reach the game anyway (ADR 0002, F6);
+ *  - **no grab** (`XGrabPointer`): the pointer belongs to the game, we must not
+ *    take it away, or the game itself breaks;
+ *  - **no event subscription**: `XQueryPointer` asks for the state, and
+ *    it needs neither focus nor event delivery to our window. This is exactly why
+ *    the invariant "input never arrives from the overlay layer" still holds.
  *
- * Вывод — только ИЗМЕНЕНИЯ позиции:
+ * Output — only CHANGES of the position:
  *
  *   pointer <x> <y> <mask>
  *
- * Неподвижный палец не должен заливать журнал демона десятками строк в секунду.
+ * A finger that does not move must not flood the daemon log with tens of lines per second.
  *
  *   gs-pointer [--display :1] [--hz 60] [--seconds 0] [--once]
  *
- * `--seconds 0` — жить, пока не убьют (рантайм). Коды выхода: 2 — сервер не
- * открылся, 3 — соединение оборвалось на ходу. Оба — деградация со словами, а
- * не стектрейс: демон обязан пережить исчезновение сервера игры.
+ * `--seconds 0` — live until killed (runtime). Exit codes: 2 — the server did not
+ * open, 3 — the connection dropped while running. Both degrade with words, not
+ * with a stack trace: the daemon must survive when the game server goes away.
  */
 
 #include <X11/Xlib.h>
@@ -46,7 +46,7 @@
 static int on_io_error(Display *dpy)
 {
 	(void)dpy;
-	printf("✗  соединение с сервером оборвалось — игра закрылась или сервер ушёл\n");
+	printf("✗  connection to the server dropped: the game closed or the server went away\n");
 	fflush(stdout);
 	exit(3);
 }
@@ -81,29 +81,29 @@ int main(int argc, char **argv)
 		} else if (strcmp(argv[i], "--once") == 0) {
 			once = true;
 		} else {
-			printf("✗  не знаю аргумент %s\n", argv[i]);
+			printf("✗  unknown argument %s\n", argv[i]);
 			printf("   gs-pointer [--display :1] [--hz 60] [--seconds 0] [--once]\n");
 			return 2;
 		}
 	}
 
 	if (hz < 1 || hz > 500) {
-		printf("✗  --hz вне 1..500: %d\n", hz);
+		printf("✗  --hz outside 1..500: %d\n", hz);
 		return 2;
 	}
 
-	/* Умолчание — переменная окружения, как у любого X-клиента. Сервер игры
-	 * подставляется вызывающим: он знает, где курсор (замер #92). */
+	/* The default is the environment variable, as for any X client. The caller
+	 * passes the game server: the caller knows where the cursor is (measurement #92). */
 	Display *dpy = XOpenDisplay(display_name);
 	if (!dpy) {
-		printf("✗  сервер %s не открылся\n", display_name ? display_name : (getenv("DISPLAY") ? getenv("DISPLAY") : "(DISPLAY не задан)"));
-		printf("   у сервера игры может быть свой Xauthority — это не поломка зонда\n");
+		printf("✗  cannot open server %s\n", display_name ? display_name : (getenv("DISPLAY") ? getenv("DISPLAY") : "(DISPLAY is not set)"));
+		printf("   the game server can have its own Xauthority, this is not a fault of the probe\n");
 		return 2;
 	}
 	XSetIOErrorHandler(on_io_error);
 
 	Window root = DefaultRootWindow(dpy);
-	printf("✓  указатель %s: экран %dx%d, опрос %d Гц\n",
+	printf("✓  pointer %s: screen %dx%d, polling %d Hz\n",
 	       DisplayString(dpy), DisplayWidth(dpy, DefaultScreen(dpy)),
 	       DisplayHeight(dpy, DefaultScreen(dpy)), hz);
 	fflush(stdout);
@@ -119,10 +119,10 @@ int main(int argc, char **argv)
 		int rx = 0, ry = 0, wx = 0, wy = 0;
 		unsigned int mask = 0;
 
-		/* False — указатель на другом экране того же сервера. У Deck экран
-		 * один, но молчать об этом нельзя: молчание неотличимо от «стоит». */
+		/* False — the pointer is on another screen of the same server. The Deck has
+		 * one screen, but we must not stay silent: silence looks the same as "not moving". */
 		if (!XQueryPointer(dpy, root, &root_ret, &child_ret, &rx, &ry, &wx, &wy, &mask)) {
-			printf("⚠  указатель на другом экране — координат нет\n");
+			printf("⚠  pointer is on another screen, no coordinates\n");
 			fflush(stdout);
 		} else if (first || rx != last_x || ry != last_y || mask != last_mask) {
 			printf("pointer %d %d %u\n", rx, ry, mask);

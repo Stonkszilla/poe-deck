@@ -1,8 +1,8 @@
-// Прайс-чек целиком: разобранный предмет → цена. Сеть здесь, решения — рядом
-// (src/trade/query.ts — какой запрос, src/trade/price.ts — что считать ценой).
+// The whole price check: a parsed item to a price. The network is here, the decisions are next to it
+// (src/trade/query.ts decides which request, src/trade/price.ts decides what counts as the price).
 //
-// Оверлея тут нет намеренно: цена возвращается структурой и печатается строкой.
-// Кто её покажет — демон, панель или лог прогона — этот файл не знает.
+// There is no overlay here on purpose: the price comes back as a structure and is printed as a line.
+// This file does not know who shows it: the daemon, the panel or the run log.
 
 import { currentLeague, exchange, fetchResults, search } from './trade/client'
 import {
@@ -34,12 +34,12 @@ import {
 } from './trade/query'
 
 /**
- * Оговорка «к чему относится эта цена». Одна на панель и журнал — расхождение
- * между тем, что видит игрок, и тем, что записано в лог, стоило бы разбора.
+ * The "what this price is for" caveat. One for the panel and the log: a mismatch
+ * between what the player sees and what is written to the log would need an investigation.
  *
- * У уникала она звучит иначе намеренно: тиров у его врождённых модов нет вовсе,
- * и «все 5 модов ниже тира 2» было бы неправдой (прогон #107). Уникал ищется
- * именем и базой — это цена ИМЕННО ЭТОГО предмета, просто без разбора роллов.
+ * For a unique it sounds different on purpose: its innate mods have no tiers at all,
+ * and "all 5 mods below tier 2" would be false (run #107). A unique is searched by
+ * name and base: this is the price of EXACTLY THIS item, only without looking at the rolls.
  */
 export function scopeNote (item: PricedItem, skipped: number): string {
   if (item.rarity === 'Unique') return `by name, rolls ignored (${skipped} mods)`
@@ -49,42 +49,42 @@ export function scopeNote (item: PricedItem, skipped: number): string {
 }
 
 export interface PriceCheck {
-  /** Какой веткой пошли. Развилка видна в ответе, а не только в логе. */
+  /** Which branch we took. The fork is visible in the answer, not only in the log. */
   fork: 'search' | 'exchange'
   league: string
   price?: Price
-  /** Курса не нашлось и мы ушли в объявления. Не ошибка, но знать полезно. */
+  /** No exchange rate was found and we went to listings. Not an error, but useful to know. */
   fellBackToSearch?: boolean
   /**
-   * Explicit-моды, не попавшие в фильтр (все ниже тира 2). Если их много, а в
-   * фильтре пусто — найдена цена базы, а не этого предмета. Число видно снаружи,
-   * потому что молчать об этом значит показать чужую цену как свою.
+   * Explicit mods that did not get into the filter (all below tier 2). If there are many of them and
+   * the filter is empty, the price found is for the base, not for this item. The number is visible outside,
+   * because staying silent about it means showing a foreign price as our own.
    */
   skippedExplicits: number
   /**
-   * Режим, в котором цена действительно найдена. Может отличаться от заказанного:
-   * пустая выдача — повод переспросить у рынка шире, но не повод молчать о том,
-   * что показанное число уже про другой рынок.
+   * The mode in which the price was really found. It can differ from the requested one:
+   * empty results are a reason to ask a wider market, but not a reason to hide
+   * that the shown number is about another market already.
    */
   mode: SearchMode
-  /** Заказывали один режим, ответил другой — на панели это говорится вслух. */
+  /** One mode was requested and another answered: the panel says so out loud. */
   fellBackToMode?: boolean
   /**
-   * Фильтры, заданные игроком в редакторе. Есть — цена относится
-   * именно к этому набору, и панель обязана сказать об этом: то же название
-   * предмета с другим набором фильтров стоит других денег. Нет — искали
-   * автоматическим набором, как до редактора.
+   * Filters set by the player in the editor. If present, the price belongs
+   * exactly to this set, and the panel must say so: the same item name
+   * with another filter set costs different money. If absent, the search used
+   * the automatic set, as before the editor.
    */
   manualStats?: StatEntryFilter[]
   /**
-   * Курс внутриигрового Currency Exchange (Faustus) по poe.ninja — только у
-   * ветки обмена. Трейд этого рынка не видит, и цены расходятся в разы, поэтому
-   * панель показывает оба числа. Нет — источник молчит, цена от этого не меняется.
+   * The in-game Currency Exchange (Faustus) rate from poe.ninja, only for
+   * the exchange branch. Trade does not see this market, and the prices differ many times, so
+   * the panel shows both numbers. If absent, the source is silent, and the price does not change.
    */
   reference?: ExchangeReference
 }
 
-/** Предел API: не больше десяти объявлений за один `fetch`. */
+/** API limit: no more than ten listings per `fetch`. */
 const FETCH_PAGE = 10
 
 async function bySearch (
@@ -98,18 +98,18 @@ async function bySearch (
   await dumpQuery(body, stats ? 'manual' : 'auto')
   let found = await search(body, league)
 
-  // Пустая выдача в узком режиме — не «такого не существует». Замер на живом
-  // трейде (15.09): Ambu's Charge с имплицитом Death Aura — ноль при `online`
-  // и 125 объявлений при `any`. Ровно это в прогоне #109 выглядело как «поиск
-  // по моду не работает». Второй запрос стоит одного лимита SEARCH и делается
-  // только когда первый пуст.
+  // Empty results in a narrow mode do not mean "this does not exist". Measured on live
+  // trade (15.09): Ambu's Charge with the Death Aura implicit gives zero with `online`
+  // and 125 listings with `any`. Exactly this looked like "search by
+  // mod does not work" in run #109. The second request costs one SEARCH limit and is made
+  // only when the first one is empty.
   if (!found.result.length && mode !== 'any') {
     status = 'any'
     try {
       found = await search(buildSearchQuery(item, { stats, status }), league)
     } catch {
-      // Второй запрос — вежливость, а не обязанность: упереться в лимит на нём
-      // значит остаться без ответа там, где первый ответ уже есть.
+      // The second request is a courtesy, not a duty: hitting the limit on it
+      // means staying without an answer where the first answer already exists.
       return { mode }
     }
   }
@@ -122,10 +122,10 @@ async function bySearch (
   }
 
   return {
-    // Инстант-баяут закрывает сделку без продавца, и держать там приманку
-    // бессмысленно — отсечка нижней четверти на этом рынке только завышает
-    // (замечание тестера по прогону #113). На рынках, где цену держит живой
-    // человек, она остаётся.
+    // Instant buyout closes the deal without a seller, and keeping bait there
+    // makes no sense: cutting the lower quarter on this market only raises the price
+    // (tester remark after run #113). On markets where a live person holds the price,
+    // the cut stays.
     price: priceFromListings(listings, found.total, undefined, { dropBait: status !== 'securable' }),
     mode: status,
     ...(status === mode ? {} : { fellBackToMode: true })
@@ -133,22 +133,22 @@ async function bySearch (
 }
 
 /**
- * Цена предмета. Ветка выбирается по самому предмету: моды есть — ищем по ним,
- * модов нет — курс валюты или объявления по имени и базе.
+ * The item price. The branch is chosen by the item itself: with mods we search by them,
+ * without mods we use the currency rate or listings by name and base.
  *
- * `opts.stats` — набор фильтров, подтверждённый игроком в редакторе. Он уезжает
- * в запрос как есть и возвращается в ответе: цена без своего набора фильтров —
- * число без предмета. Пустой массив — тоже выбор игрока («без стат-фильтров»),
- * и развилку он не меняет: у редкого предмета это цена базы, а не курс обмена.
+ * `opts.stats` is the filter set the player confirmed in the editor. It goes
+ * to the request as is and comes back in the answer: a price without its filter set is
+ * a number without an item. An empty array is also a choice of the player ("no stat filters"),
+ * and it does not change the fork: for a rare item it is the base price, not the exchange rate.
  *
- * Пустой результат — это `price: undefined`, а не исключение: «такого сейчас
- * никто не продаёт» — законный ответ трейда, и наверх он должен уехать таким же.
+ * An empty result is `price: undefined`, not an exception: "nobody sells this
+ * now" is a legal trade answer, and it must go up the same way.
  */
 /**
- * Куда складывать тела уходящих запросов. Приёмка эпика требует сверить то, что
- * игрок выбрал на экране, с тем, что реально уехало в трейд, — по логу этого не
- * сделать: он печатает id фильтров, но не границы и не остальные поля запроса.
- * Пусто — не складывать (обычная игра ничего на диск не пишет).
+ * Where to store the bodies of outgoing requests. The epic acceptance requires comparing what
+ * the player selected on the screen with what really went to trade, and the log cannot
+ * do that: it prints filter ids, but not the bounds and not the other request fields.
+ * Empty means do not store (normal play writes nothing to disk).
  */
 async function dumpQuery (body: unknown, kind: 'auto' | 'manual'): Promise<void> {
   const dir = process.env.POE_DECK_QUERY_DUMP
@@ -163,34 +163,34 @@ async function dumpQuery (body: unknown, kind: 'auto' | 'manual'): Promise<void>
 let queries = 0
 
 /**
- * Сколько живёт ответ на одно тело запроса. Лимит трейда упирается в SEARCH
- * (5 за 10 с, 15 за минуту), а не в FETCH: в прогоне #143 все семь отказов дал
- * наш лимитер на поиске, сервер не отказал ни разу. Из 28 автозапросов того же
- * прогона разных тел было 10 — игрок жмёт кнопку на том же предмете снова, и
- * каждое нажатие стоило поиска и двух страниц FETCH. Три минуты — меньше, чем
- * рынок успевает сдвинуть цену, и больше, чем игрок сверяет один предмет.
+ * How long the answer to one request body lives. The trade limit hits SEARCH
+ * (5 per 10 s, 15 per minute), not FETCH: in run #143 all seven refusals came from
+ * our limiter on search, the server did not refuse once. Of 28 auto requests in the same
+ * run, only 10 had different bodies: the player presses the button on the same item again, and
+ * each press cost a search and two FETCH pages. Three minutes is less than
+ * the market needs to move the price, and more than the player needs to check one item.
  */
 const CACHE_TTL_MS = 3 * 60_000
 
 /**
- * Ответ рынка без того, что принадлежит самому вызову. Набор игрока и число
- * пропущенных модов берутся из текущего нажатия: у уникала без статов
- * автоматическая оценка и подтверждённый редактор с `stats: []` дают одно тело
- * запроса, но вторая цена обязана сказать «player filters», а первая — нет.
+ * The market answer without what belongs to the call itself. The set of the player and the number
+ * of skipped mods come from the current press: for a unique without stats
+ * the automatic estimate and a confirmed editor with `stats: []` give one request
+ * body, but the second price must say "player filters" and the first must not.
  */
 type MarketAnswer = Omit<PriceCheck, 'skippedExplicits' | 'manualStats'>
 
 const cache = new Map<string, { at: number, market: MarketAnswer }>()
 
-/** Тесты начинают с пустого кэша, как и новый запуск демона. */
+/** Tests start with an empty cache, as a new daemon start does. */
 export function resetPriceCache (): void {
   cache.clear()
 }
 
 /**
- * Ключ — лига и тело первого запроса ветки. Тело уже содержит всё, от чего
- * зависит ответ: базу, тир, флаги карты, режим рынка и набор фильтров игрока.
- * Два предмета с одним телом получают у трейда один ответ — и у нас тоже.
+ * The key is the league and the body of the first request of the branch. The body already holds everything
+ * the answer depends on: base, tier, map flags, market mode and the filter set of the player.
+ * Two items with one body get one answer from trade, and from us too.
  */
 function cacheKey (item: PricedItem, league: string, fork: PriceCheck['fork'], stats: StatEntryFilter[] | undefined, mode: SearchMode): string {
   const body = fork === 'exchange'
@@ -214,7 +214,7 @@ export async function priceOf (
     ...(opts.stats ? { manualStats: opts.stats } : {})
   }
 
-  // Ошибка (лимит, сеть) в кэш не попадает: она уходит исключением мимо записи.
+  // An error (rate limit, network) does not get into the cache: it goes past the write as an exception.
   const key = cacheKey(item, league, fork, opts.stats, mode)
   const hit = cache.get(key)
   if (hit && Date.now() - hit.at < CACHE_TTL_MS) {
@@ -226,7 +226,7 @@ export async function priceOf (
   return ownedBy(market, base)
 }
 
-/** Ответ рынка плюс то, что принадлежит этому нажатию, а не прошлому. */
+/** The market answer plus what belongs to this press, not to the previous one. */
 function ownedBy (market: MarketAnswer, call: PriceCheck): PriceCheck {
   return {
     ...market,
@@ -244,8 +244,8 @@ async function lookUp (
   base: PriceCheck
 ): Promise<PriceCheck> {
   if (fork === 'exchange') {
-    // Курс Faustus идёт параллельно с трейдом и не бросает: ориентир не имеет
-    // права ни задержать цену, ни отменить её своей ошибкой.
+    // The Faustus rate runs in parallel with trade and does not throw: a reference must
+    // neither delay the price nor cancel it with its own error.
     const faustus = exchangeReference(item, league)
     const found = await exchange<ExchangeEntry>(buildExchangeQuery(item, { status: mode }), league)
     const price = priceFromExchange(Object.values(found.result), found.total)
@@ -253,15 +253,15 @@ async function lookUp (
     const withReference = reference ? { ...base, reference } : base
     if (price) return { ...withReference, price }
 
-    // Курса нет — так бывает на старте лиги и у валюты, которую на обмен просто
-    // не выставляют. Объявления при этом есть, и они тоже цена.
+    // No rate: this happens at league start and for currency that nobody puts
+    // on the exchange. There are listings, and they are a price too.
     return { ...withReference, ...await bySearch(item, league, stats, mode), fellBackToSearch: true }
   }
 
   return { ...base, ...await bySearch(item, league, stats, mode) }
 }
 
-/** Строка результата: что за предмет, какой веткой шли, сколько стоит. */
+/** Result line: which item, which branch, how much it costs. */
 export function formatPriceCheck (item: PricedItem, check: PriceCheck): string {
   const name = [item.info.name, item.info.refName]
     .filter((part, index, all) => part && all.indexOf(part) === index)
@@ -270,25 +270,25 @@ export function formatPriceCheck (item: PricedItem, check: PriceCheck): string {
     ? 'exchange -> listings'
     : (check.fork === 'exchange' ? 'exchange' : 'listings')
 
-  // Тир карты — часть того, что искали: в журнале T14 и T16 иначе неразличимы.
+  // The map tier is part of what was searched: otherwise T14 and T16 cannot be told apart in the log.
   const tier = item.mapTier != null ? ` T${item.mapTier}` : ''
   const whole = check.price ? stackPrice(check.price, item.stackSize?.value) : undefined
   const stack = whole ? ` | stack ${item.stackSize!.value}: ${priceAmountText(whole)}` : ''
   const line = `${name}${tier} [${check.league}, ${MODE_LABEL[check.mode]}, ${via}]: ${formatPrice(check.price)}${stack}${faustusText(item, check)}`
 
-  // Набор игрока называется вслух и в журнале: по нему потом сверяют тело
-  // запроса с тем, что было выбрано на экране (приёмка редактора фильтров).
+  // The set of the player is named out loud in the log too: later the request body is compared
+  // with what was selected on the screen by it (filter editor acceptance).
   if (check.manualStats) {
     return `${line} [player filters: ${check.manualStats.length}]`
   }
   if (check.fork === 'exchange' || !check.skippedExplicits) return line
 
-  // Явная оговорка вместо тихого «цена такая». Пустой фильтр при пяти модах —
-  // это цена базы, и на панели она обязана выглядеть иначе, чем цена предмета.
+  // An explicit caveat instead of a silent "the price is this". An empty filter with five mods
+  // is the base price, and on the panel it must look different from the item price.
   return `${line} [${scopeNote(item, check.skippedExplicits)}]`
 }
 
-/** Хвост строки журнала: курс Faustus за штуку и за стак, если он есть. */
+/** The tail of the log line: the Faustus rate per unit and per stack, if there is one. */
 function faustusText (item: PricedItem, check: PriceCheck): string {
   if (!check.reference) return ''
   const whole = stackPrice(check.reference, item.stackSize?.value)

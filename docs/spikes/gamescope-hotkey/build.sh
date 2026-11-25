@@ -1,15 +1,15 @@
 #!/usr/bin/env sh
-# Сборка зонда хоткея из вендоренного XML протокола.
+# Builds the hotkey probe from the vendored protocol XML.
 #
-#   ./build.sh [КАТАЛОГ] [--with-mock]
+#   ./build.sh [DIR] [--with-mock]
 #
-# КАТАЛОГ по умолчанию — ./build рядом с исходником; на Deck сюда передаётся
-# ~/poe-deck-tools, чтобы бинарь пережил чистку workspace джоба.
+# DIR defaults to ./build next to the source; on the Deck the caller passes
+# ~/poe-deck-tools, so the binary survives the cleanup of the job workspace.
 #
-# Одно место на два контура: check.sh зовёт это в docker на mini, Jenkinsfile —
-# в distrobox на Deck. Рецепт сборки не должен разъезжаться между ними.
+# One place for two environments: check.sh calls this in docker on mini, the
+# Jenkinsfile calls it in distrobox on the Deck. The build recipe must not drift between them.
 #
-# Нужны: wayland-scanner и libwayland-client (плюс libwayland-server для мока).
+# Requires: wayland-scanner and libwayland-client (plus libwayland-server for the mock).
 #   Arch/SteamOS-distrobox:  pacman -S gcc wayland
 #   Debian:                  apt-get install gcc libwayland-dev
 set -eu
@@ -28,8 +28,8 @@ done
 cc=${CC:-cc}
 mkdir -p "$out"
 
-# Маршалинг генерируется, а не хранится: гарантия, что код соответствует XML,
-# и что мы не тащим в репозиторий скомпилированное чужое.
+# The marshalling is generated, not stored: this guarantees that the code matches
+# the XML, and that we do not bring compiled third-party code into the repository.
 wayland-scanner client-header "$src/gamescope-action-binding.xml" \
 	"$out/gamescope-action-binding-client-protocol.h"
 wayland-scanner server-header "$src/gamescope-action-binding.xml" \
@@ -37,17 +37,17 @@ wayland-scanner server-header "$src/gamescope-action-binding.xml" \
 wayland-scanner private-code "$src/gamescope-action-binding.xml" \
 	"$out/gamescope-action-binding-protocol.c"
 
-# Сгенерированный код собирается без -Werror: он чужой и меняется с версией
-# wayland-scanner. Строгость — только на наших файлах, чтобы предупреждение
-# в них нельзя было проигнорировать.
+# The generated code builds without -Werror: it is not ours and changes with the
+# wayland-scanner version. Strict flags apply only to our files, so that nobody
+# can ignore a warning in them.
 $cc -O1 -I"$out" -c -o "$out/protocol.o" "$out/gamescope-action-binding-protocol.c"
 
 $cc -O1 -Wall -Wextra -Werror -I"$out" -c -o "$out/probe.o" "$src/gs-hotkey-probe.c"
 $cc -o "$out/gs-hotkey-probe" "$out/probe.o" "$out/protocol.o" -lwayland-client
-echo "✓  собран $out/gs-hotkey-probe"
+echo "✓  built $out/gs-hotkey-probe"
 
 if [ "$mock" = 1 ]; then
 	$cc -O1 -Wall -Wextra -Werror -I"$out" -c -o "$out/mock.o" "$src/gs-hotkey-mock.c"
 	$cc -o "$out/gs-hotkey-mock" "$out/mock.o" "$out/protocol.o" -lwayland-server
-	echo "✓  собран $out/gs-hotkey-mock"
+	echo "✓  built $out/gs-hotkey-mock"
 fi

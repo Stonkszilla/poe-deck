@@ -1,33 +1,33 @@
-// Справочники донора с нашей дельтой поверх.
+// Donor reference data with our delta on top.
 //
-// Парсер по-прежнему берётся из пина. Справочники — тоже из пина, но поверх
-// них ложится дельта `data/<игра>/<язык>/*.delta.ndjson`. Её пишет наш
-// генератор (`tools/datagen/`) из файлов игры и данных трейда, когда донор
-// ещё не выпустил данные под новую лигу.
+// The parser still comes from the pin. The reference data also comes from the pin,
+// but the delta `data/<game>/<language>/*.delta.ndjson` goes on top of it. Our
+// generator (`tools/datagen/`) writes it from the game files and trade data when
+// the donor has not released data for a new league yet.
 //
-// Слияние — upsert по ключу. Строка дельты с ключом, который есть в пине,
-// заменяет строку пина на том же месте. Строка с новым ключом дописывается в
-// конец. Ключ предмета — `namespace::refName`, ключ стата — `ref`. Так дельта
-// и дописывает новые базы, и добавляет trade id к статам, которые пин уже знает.
+// The merge is an upsert by key. A delta line with a key that exists in the pin
+// replaces the pin line in the same place. A line with a new key is appended at
+// the end. The item key is `namespace::refName`, the stat key is `ref`. So the delta
+// both appends new bases and adds trade ids to stats that the pin already knows.
 //
-// Бинарные индексы к результату строятся тем же алгоритмом, что генератор
-// донора `renderer/src/assets/make-index-files.mjs` (SnosMe/awakened-poe-trade,
-// MIT, licenses/awakened-poe-trade.LICENSE). Его самого позвать нельзя: он
-// пишет в каталог пина по жёсткому пути и только для всех четырёх языков.
+// The binary indexes for the result use the same algorithm as the donor generator
+// `renderer/src/assets/make-index-files.mjs` (SnosMe/awakened-poe-trade,
+// MIT, licenses/awakened-poe-trade.LICENSE). We cannot call it directly: it
+// writes to the pin directory by a hardcoded path and only for all four languages.
 
 import fnv1a from '@sindresorhus/fnv1a'
 import { copyFileSync, existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 
-/** Файлы `public/data`, которые едут из пина как есть. */
+/** Files of `public/data` that come from the pin as is. */
 const DATA_FILES = ['item-drop.json', 'patrons.json']
-/** Файлы `public/data/<язык>`, которые едут из пина как есть. */
+/** Files of `public/data/<language>` that come from the pin as is. */
 const LANG_FILES = ['client_strings.js', 'app_i18n.json']
 
 export type KeyOf = (row: Record<string, unknown>) => string
 
 export const itemKey: KeyOf = row => `${String(row.namespace)}::${String(row.refName)}`
-/** Ключ стата. У группы статов (`{ resolve, stats }`) ключ — ref первого. */
+/** Stat key. For a stat group (`{ resolve, stats }`) the key is the ref of the first stat. */
 export const statKey: KeyOf = row => {
   const stats = row.stats as Array<{ ref: string }> | undefined
   return stats ? `group::${stats[0]?.ref ?? ''}` : String(row.ref)
@@ -38,11 +38,11 @@ function lines (ndjson: string): string[] {
 }
 
 /**
- * Upsert дельты в базу. Порядок базы сохраняется, новые строки идут в конец.
+ * Upsert of the delta into the base. The base order stays, new lines go to the end.
  *
- * Строка дельты может нести `_key` — ключ строки пина, которую она заменяет.
- * Он нужен, когда игра переписала текст мода: ref стата сменился, а заменить
- * надо прежнюю строку, а не дописать вторую. В результат `_key` не попадает.
+ * A delta line can carry `_key`: the key of the pin line that it replaces.
+ * It is needed when the game rewrote a mod text: the stat ref changed, and the old
+ * line must be replaced, not a second one appended. `_key` does not go to the result.
  */
 export function mergeNdjson (base: string, delta: string, keyOf: KeyOf): string {
   const upserts = new Map<string, string>()
@@ -83,7 +83,7 @@ function hash (text: string): number {
   return Number(fnv1a(text, { size: 32 }))
 }
 
-/** Пары (хеш, смещение строки), отсортированные по хешу, — формат индекса донора. */
+/** Pairs (hash, line offset) sorted by hash: the donor index format. */
 function toIndex (rows: Array<{ hash: number, start: number }>): Uint32Array {
   rows.sort((a, b) => a.hash - b.hash)
   const index = new Uint32Array(rows.length * 2)
@@ -95,8 +95,8 @@ function toIndex (rows: Array<{ hash: number, start: number }>): Uint32Array {
 }
 
 /**
- * Смещения строк считаются в UTF-16, а не в байтах: донор ищет по ним
- * `ndjson.slice(start)` в строке JS. Так же считает и его генератор.
+ * Line offsets are counted in UTF-16, not in bytes: the donor uses them for
+ * `ndjson.slice(start)` on a JS string. Its generator counts the same way.
  */
 function eachLine (ndjson: string, fn: (row: Record<string, unknown>, start: number) => void): void {
   let start = 0
@@ -124,8 +124,8 @@ export function statIndexes (ndjson: string): { ref: Uint32Array, matcher: Uint3
 }
 
 export function itemIndexes (ndjson: string): { name: Uint32Array, ref: Uint32Array } {
-  // Первая строка ключа — точка входа: дальше донор идёт подряд по строкам
-  // с тем же именем (варианты одной уникалки).
+  // The first line of a key is the entry point: from there the donor walks the
+  // following lines with the same name (variants of one unique).
   const firstByKey = new Map<string, { name: number, ref: number, start: number }>()
   eachLine(ndjson, (row, start) => {
     const key = itemKey(row)
@@ -144,31 +144,31 @@ export function itemIndexes (ndjson: string): { name: Uint32Array, ref: Uint32Ar
 }
 
 export interface AssembleArgs {
-  /** `renderer/public/` пина донора. */
+  /** `renderer/public/` of the donor pin. */
   pinPublicDir: string
-  /** Каталог дельты одного языка: `data/poe1/en/`. */
+  /** Delta directory of one language: `data/poe1/en/`. */
   deltaDir: string
-  /** Куда собрать `public/` — с `data/<язык>/` и индексами. */
+  /** Where to assemble `public/`, with `data/<language>/` and the indexes. */
   outPublicDir: string
   lang: string
 }
 
 /**
- * Версия формата сборки. Поднимается, когда меняется то, как этот файл
- * собирает справочники или индексы: иначе старая сборка выглядит свежей.
+ * Assembly format version. Bump it when the way this file assembles the reference
+ * data or the indexes changes: otherwise an old assembly looks fresh.
  */
 const FORMAT = 1
 
 /**
- * Собирает `public/` для донора: файлы пина, ndjson с дельтой и индексы.
- * Возвращает `true`, если что-то пересобрано, `false` — если вход тот же.
+ * Assembles `public/` for the donor: pin files, ndjson with the delta, and indexes.
+ * Returns `true` if something was rebuilt, `false` if the input is the same.
  *
- * Отпечаток покрывает всё, что едет в сборку, — и ndjson, и файлы пина,
- * которые копируются как есть: донор меняет `client_strings.js` отдельными
- * коммитами, и после бампа пина старая копия молча испортила бы разбор.
+ * The stamp covers everything that goes into the assembly: the ndjson and the pin
+ * files that are copied as is. The donor changes `client_strings.js` in separate
+ * commits, and after a pin bump an old copy would silently break parsing.
  *
- * Сборка пишется во временный каталог и подменяет прежнюю переименованием:
- * демон и CLI, запущенные разом на холодном кэше, не прочтут полузаписанный файл.
+ * The assembly is written to a temporary directory and replaces the old one by rename:
+ * a daemon and a CLI started together on a cold cache do not read a half-written file.
  */
 export function assembleDonorData ({ pinPublicDir, deltaDir, outPublicDir, lang }: AssembleArgs): boolean {
   const read = (path: string) => existsSync(path) ? readFileSync(path, 'utf8') : ''
@@ -211,10 +211,10 @@ export function assembleDonorData ({ pinPublicDir, deltaDir, outPublicDir, lang 
   writeFileSync(join(tmpLang, 'stats-matcher.index.bin'), statIdx.matcher)
   writeFileSync(join(tmpLang, '.stamp'), stamp)
 
-  // Прежняя сборка уходит в сторону, новая встаёт на её место: окно, в котором
-  // каталога нет, — между двумя rename, без записи файлов внутри.
-  // Второй процесс, собравший то же самое, может успеть первым — тогда его
-  // сборка и остаётся, а наша выбрасывается: вход у них один.
+  // The old assembly moves aside, the new one takes its place: the window without
+  // the directory is between two renames, with no file writes inside it.
+  // A second process that built the same thing can be first: then its assembly
+  // stays and ours is discarded, because both have the same input.
   const old = `${tmp}.old`
   try { renameSync(outPublicDir, old) } catch {}
   try {

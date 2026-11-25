@@ -1,31 +1,31 @@
-// Конфиг игрока: один файл `~/.config/poe-deck/poe-deck.conf`.
+// Player config: one file `~/.config/poe-deck/poe-deck.conf`.
 //
-// Переменные окружения из docs/ops/deck-daemon.md остаются — ими живут прогоны
-// джоба и отладка из SSH. Игроку они недоступны: юнит `systemd --user` он не
-// правит, а в Game Mode нет даже терминала. Поэтому для игрока — файл, который
-// правится в Desktop Mode любым редактором.
+// The environment variables from docs/ops/deck-daemon.md stay: job runs and
+// debugging over SSH use them. The player cannot use them: the player does not
+// edit the `systemd --user` unit, and Game Mode has no terminal at all. So the
+// player gets a file that any editor can change in Desktop Mode.
 //
-// Старшинство: переменная окружения > конфиг > умолчание. Прогон джоба обязан
-// воспроизводиться независимо от того, что лежит в $HOME у Deck.
+// Precedence: environment variable > config > default. A job run must
+// reproduce no matter what is in $HOME on the Deck.
 //
-// Формат — `ключ = значение` с комментариями `#`, а не TOML. Файл правит человек
-// без опыта, и ошибка обязана называть строку: `Bun.TOML.parse` на одной строке
-// `foo bar` отвечает «line 2», а на отсутствующем значении — нулевой строкой.
-// Своя грамматика на три ключа короче, чем обёртка, которая исправляет чужую.
+// The format is `key = value` with `#` comments, not TOML. A person without
+// experience edits the file, and an error must name the line: `Bun.TOML.parse`
+// answers "line 2" for the one line `foo bar`, and line zero for a missing value.
+// Our own grammar for three keys is shorter than a wrapper that fixes another one.
 
 import { existsSync, readFileSync } from 'node:fs'
 import { parseSearchMode, type SearchMode } from './trade/query'
 
 export interface Settings {
-  /** Лига trade. Нет — текущая софткор trade-лига из `/api/leagues`. */
+  /** Trade league. If absent, the current softcore trade league from `/api/leagues`. */
   league?: string
-  /** Рынок цены по умолчанию. */
+  /** Default price market. */
   priceMode?: SearchMode
-  /** Сколько секунд держать панель на экране. */
+  /** How many seconds to keep the panel on screen. */
   panelTtl?: number
 }
 
-/** Ключи файла → поле настроек. Порядок — порядок в подсказке об ошибке. */
+/** File keys → settings field. The order is the order in the error hint. */
 const KEYS = {
   league: 'league',
   price_mode: 'priceMode',
@@ -34,16 +34,16 @@ const KEYS = {
 
 type Key = keyof typeof KEYS
 
-/** Предел TTL: дольше десяти минут панель висит уже не «цена», а забытое окно. */
+/** TTL limit: after ten minutes the panel is not a "price" but a forgotten window. */
 const TTL_MAX = 600
 
-/** Результат разбора: настройки и ошибки по строкам. Ошибка не роняет остальное. */
+/** Parse result: settings and per-line errors. An error does not drop the rest. */
 export interface ParsedConfig {
   settings: Settings
   errors: string[]
 }
 
-/** Каталог конфига: `$XDG_CONFIG_HOME/poe-deck`, иначе `~/.config/poe-deck`. */
+/** Config directory: `$XDG_CONFIG_HOME/poe-deck`, else `~/.config/poe-deck`. */
 export function configDir (env = process.env): string {
   return `${env.XDG_CONFIG_HOME || `${env.HOME}/.config`}/poe-deck`
 }
@@ -69,10 +69,10 @@ function value (key: Key, raw: string): Settings[keyof Settings] {
 }
 
 /**
- * Текст файла → настройки. Каждая строка разбирается сама по себе: опечатка в
- * одном ключе не отменяет лигу в соседнем, а называется со своим номером.
- * Пустое значение (`league =`) — то же, что строки нет: так в примере
- * «раскомментировал и стёр» не превращается в ошибку.
+ * File text → settings. Each line is parsed on its own: a typo in one key
+ * does not cancel the league in the next one, it is reported with its line number.
+ * An empty value (`league =`) is the same as no line: so in the example,
+ * "uncommented and erased" does not become an error.
  */
 export function parseConfig (text: string): ParsedConfig {
   const settings: Settings = {}
@@ -81,8 +81,8 @@ export function parseConfig (text: string): ParsedConfig {
 
   text.split('\n').forEach((source, index) => {
     const at = `line ${index + 1}`
-    // Комментарий — с начала строки или после пробела: в имени лиги `#` не
-    // встречается, а `a#b` без пробела комментарием не считаем.
+    // A comment starts at the line start or after a space: a league name has no `#`,
+    // and we do not count `a#b` without a space as a comment.
     const line = source.replace(/(^|\s)#.*$/, '').trim()
     if (!line) return
 
@@ -115,16 +115,16 @@ export function parseConfig (text: string): ParsedConfig {
   return { settings, errors }
 }
 
-/** Что прочитано с диска: путь, был ли файл, и разбор. */
+/** What was read from disk: the path, whether the file existed, and the parse. */
 export interface LoadedConfig extends ParsedConfig {
   path: string
   exists: boolean
 }
 
 /**
- * Файл с диска. Нет файла — не ошибка: умолчания и есть первый запуск. Файл
- * есть, но не читается (каталог вместо файла, права) — ошибка словами, а не
- * стектрейс из `readFileSync`.
+ * The file from disk. No file is not an error: defaults are the first run. If the
+ * file exists but cannot be read (a directory instead of a file, permissions), the
+ * error is in words, not a stack trace from `readFileSync`.
  */
 export function loadConfig (path = configPath()): LoadedConfig {
   if (!existsSync(path)) return { path, exists: false, settings: {}, errors: [] }
@@ -136,8 +136,8 @@ export function loadConfig (path = configPath()): LoadedConfig {
 }
 
 /**
- * Окружение поверх конфига. Ошибки переменных — в тот же список, что ошибки
- * файла: и то и другое игрок или прогон увидит одинаково, строкой с причиной.
+ * Environment over the config. Variable errors go to the same list as file
+ * errors: the player or the run sees both the same way, as a line with a reason.
  */
 export function effectiveSettings (file: Settings, env = process.env): ParsedConfig {
   const errors: string[] = []

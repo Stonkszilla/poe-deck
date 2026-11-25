@@ -1,39 +1,39 @@
 /*
- * gs-clip — содержимое X11 CLIPBOARD в stdout.
+ * gs-clip — the content of the X11 CLIPBOARD on stdout.
  *
- * До него буфер читался `xclip` внутри distrobox `gs-probe`: на
- * стоковой SteamOS xclip нет, а контейнера и тулчейна у игрока нет тем более.
- * Этот бинарь — та же форма, что у `gs-pointer`: маленький Xlib-клиент читает
- * то, чего не может bun, и отдаёт демону байты. Собирается тем же `build.sh`
- * и линкуется только с libX11 — она есть на стоковом rootfs.
+ * Before it, the clipboard was read by `xclip` inside the distrobox `gs-probe`: stock
+ * SteamOS has no xclip, and the player has no container and no toolchain at all.
+ * This binary has the same shape as `gs-pointer`: a small Xlib client reads
+ * what bun cannot, and gives the bytes to the daemon. The same `build.sh` builds it,
+ * and it links only with libX11, which the stock rootfs has.
  *
- * Читается ровно то, что читал xclip: `xclip -o -selection clipboard`, то есть
- * цель UTF8_STRING с откатом на STRING. Игра под Proton отдаёт UTF8_STRING;
- * откат нужен на случай владельца, который знает только Latin-1.
+ * It reads exactly what xclip read: `xclip -o -selection clipboard`, that is
+ * the UTF8_STRING target with a fallback to STRING. The game under Proton gives UTF8_STRING;
+ * the fallback is for an owner that knows only Latin-1.
  *
- * ── Что здесь намеренно не делается ─────────────────────────────────────────
+ * ── What this deliberately does not do ──────────────────────────────────────
  *
- *  - **никакого владения селекшеном**: мы только просим копию. Владеть буфером
- *    значит жить, пока буфер нужен, — на этом xclip уже подводил на Deck
- *    (tools/probe-deck-input.sh, прогон #52);
- *  - **никакого ожидания смены**: один запрос — один ответ. Свежесть буфера
- *    решает демон (`clipboardAfterTrigger` в src/slice.ts), он и зовёт нас
- *    повторно.
+ *  - **no selection ownership**: we only ask for a copy. To own the clipboard
+ *    means to live while the clipboard is needed, and xclip already failed on that on the Deck
+ *    (tools/probe-deck-input.sh, run #52);
+ *  - **no wait for a change**: one request, one answer. The daemon decides
+ *    if the clipboard is fresh (`clipboardAfterTrigger` in src/slice.ts), and it calls us
+ *    again.
  *
- * Большой буфер владелец отдаёт по протоколу INCR кусками — он поддержан: текст
- * предмета короток, но читалка, молча обрезающая длинный буфер, хуже никакой.
+ * The owner gives a large clipboard in chunks by the INCR protocol, and it is supported: item
+ * text is short, but a reader that silently cuts a long clipboard is worse than none.
  *
  *   gs-clip [--display :0] [--timeout-ms 2000] [--selection CLIPBOARD|PRIMARY] [--trace]
  *
- * `--trace` называет в stderr передачу кусками — для проверки, что INCR
- * действительно был, а не только что байты сошлись.
+ * `--trace` names the chunked transfer in stderr, to check that INCR
+ * really happened, and not only that the bytes match.
  *
- * Коды выхода: 0 — байты в stdout (пустой буфер — тоже 0 и пустой вывод);
- * 1 — у селекшена нет владельца или владелец отказал; 2 — сервер не открылся
- * или аргументы не разобраны; 3 — владелец не ответил за отведённое время;
- * 4 — ответ пришёл, но не прочитался (отказ XGetWindowProperty или памяти)
- * или не записался в stdout.
- * Причина каждого ненулевого кода — одной строкой в stderr.
+ * Exit codes: 0 — bytes on stdout (an empty clipboard is also 0 with empty output);
+ * 1 — the selection has no owner or the owner refused; 2 — the server did not open
+ * or the arguments did not parse; 3 — the owner did not answer in the given time;
+ * 4 — the answer came but could not be read (XGetWindowProperty or memory failed)
+ * or could not be written to stdout.
+ * The cause of each non-zero code is one line in stderr.
  */
 
 #include <X11/Xatom.h>
@@ -54,8 +54,8 @@ static long now_ms(void)
 	return (long)ts.tv_sec * 1000L + ts.tv_nsec / 1000000L;
 }
 
-/* Ошибки протокола (BadWindow у умершего владельца и т. п.) не должны убивать
- * процесс стандартным обработчиком Xlib: исход и так виден по ответу. */
+/* Protocol errors (BadWindow from a dead owner and the like) must not kill
+ * the process with the default Xlib handler: the result is visible from the answer anyway. */
 static int on_error(Display *dpy, XErrorEvent *ev)
 {
 	(void)dpy;
@@ -64,9 +64,9 @@ static int on_error(Display *dpy, XErrorEvent *ev)
 }
 
 /*
- * Ждёт событие, для которого `match` вернёт true, но не дольше `deadline`.
- * Опрос сокета, а не голый XNextEvent: тот висит вечно, если владелец молчит, —
- * ровно та грабля, из-за которой xclip в демоне был обёрнут в `timeout`.
+ * Waits for an event for which `match` returns true, but not longer than `deadline`.
+ * It polls the socket, not a bare XNextEvent: that one hangs forever if the owner is silent —
+ * exactly the pitfall that made the daemon wrap xclip in `timeout`.
  */
 static bool wait_event(Display *dpy, XEvent *ev, long deadline,
 		       bool (*match)(const XEvent *, const void *), const void *arg)
@@ -110,12 +110,12 @@ static bool is_new_value(const XEvent *ev, const void *arg)
 	       ev->xproperty.atom == w->property && ev->xproperty.state == PropertyNewValue;
 }
 
-/* Читает свойство целиком и удаляет его — удаление и есть сигнал владельцу
- * INCR «давай следующий кусок». Тип свойства — в `type`, байты — в `out`.
+/* Reads the whole property and deletes it — the delete is the signal to the INCR
+ * owner "send the next chunk". The property type goes to `type`, the bytes to `out`.
  *
- * false — свойство не прочиталось или байты некуда положить. Это отдельный
- * исход, а не пустой буфер: иначе сбой выглядел бы как «скопировано пусто», а
- * посреди INCR — как штатный конец передачи, и вывод молча обрезался бы. */
+ * false — the property could not be read or the bytes have nowhere to go. This is a separate
+ * result, not an empty clipboard: otherwise a failure would look like "copied empty", and
+ * in the middle of INCR like a normal end of transfer, and the output would be silently cut. */
 static bool take_property(Display *dpy, Window win, Atom prop, Atom *type,
 			  unsigned char **out, unsigned long *len)
 {
@@ -131,7 +131,7 @@ static bool take_property(Display *dpy, Window win, Atom prop, Atom *type,
 			       type, &format, &items, &after, &data) != Success)
 		return false;
 	if (data && items > 0) {
-		/* format 32 у Xlib — массив long, но текстовые цели всегда 8-битные. */
+		/* format 32 in Xlib is an array of long, but text targets are always 8-bit. */
 		*len = items * (unsigned long)(format == 32 ? sizeof(long) : (unsigned long)format / 8);
 		*out = malloc(*len);
 		if (*out) {
@@ -198,9 +198,9 @@ int main(int argc, char **argv)
 		return 1;
 	}
 
-	/* Окно не показывается никогда: оно нужно только как адрес для ответа.
-	 * PropertyChangeMask — заранее, до запроса: иначе первый кусок INCR может
-	 * прийти раньше, чем мы на него подписались. */
+	/* The window is never shown: it is only an address for the answer.
+	 * PropertyChangeMask is set before the request: otherwise the first INCR chunk can
+	 * arrive before we subscribe to it. */
 	Window win = XCreateSimpleWindow(dpy, DefaultRootWindow(dpy), 0, 0, 1, 1, 0, 0, 0);
 	XSelectInput(dpy, win, PropertyChangeMask);
 
@@ -217,7 +217,7 @@ int main(int argc, char **argv)
 			XCloseDisplay(dpy);
 			return 3;
 		}
-		/* property == None — владелец этой цели не знает; пробуем следующую. */
+		/* property == None — the owner does not know this target; try the next one. */
 		converted = ev.xselection.property != None;
 	}
 	if (!converted) {
@@ -239,8 +239,8 @@ int main(int argc, char **argv)
 			rc = 4;
 		free(buf);
 	} else {
-		/* INCR: свойство уже удалено чтением выше — это «начинай». Дальше каждый
-		 * кусок приходит новым значением свойства, пустой кусок — конец. */
+		/* INCR: the read above already deleted the property — that means "start". Then each
+		 * chunk arrives as a new property value, an empty chunk is the end. */
 		free(buf);
 		const struct property_wait pw = { win, prop };
 		unsigned long chunks = 0, total = 0;

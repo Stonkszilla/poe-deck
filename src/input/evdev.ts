@@ -1,41 +1,41 @@
-// Сырой ввод контроллера Deck: устройства и события evdev.
+// Raw input of the Deck controller: evdev devices and events.
 //
-// Это путь 3 запасных каналов [ADR 0002](../../docs/decisions/0002-input-channel.md):
-// «контроллер читается пользователем `deck` без root, ввод дублируется, а не
-// отбирается у игры». Понадобился он не потому, что основной канал сломался, а
-// потому, что дискретного аккорда мало: список модов кнопками не листается, а
-// тачпад даёт непрерывную координату.
+// This is path 3 of the fallback channels in [ADR 0002](../../docs/decisions/0002-input-channel.md):
+// "the user `deck` reads the controller without root, input is duplicated, not
+// taken from the game". It is needed not because the main channel broke, but
+// because a discrete chord is not enough: buttons cannot scroll the mod list, and
+// the trackpad gives a continuous coordinate.
 //
-// ── Почему TypeScript, а не C ───────────────────────────────────────────────
+// ── Why TypeScript and not C ──────────────────────────────────────────────────
 //
-// `gs-hotkey-probe` и `gs-panel` написаны на C потому, что им нужны Wayland и
-// Xlib. Здесь ничего такого нет: evdev — это файл, из которого читаются записи
-// по 24 байта. Значит правило проекта работает как обычно — TypeScript под bun,
-// и тот же код потом живёт в демоне, а не переписывается.
+// `gs-hotkey-probe` and `gs-panel` are written in C because they need Wayland and
+// Xlib. Nothing like that is here: evdev is a file that gives records
+// of 24 bytes. So the project rule applies as usual: TypeScript under bun,
+// and the same code later lives in the daemon instead of a rewrite.
 //
-// ── Две вещи, которые здесь намеренно не делаются ───────────────────────────
+// ── Two things this code does not do on purpose ──────────────────────────────
 //
-//  1. **`hidraw` не открываем никогда** (ADR 0002, Ф8: открытие роняет контроллер
-//     в lizard mode). Только `/dev/input/event*`.
-//  2. **Ничего не захватываем** (`EVIOCGRAB`). Мы читатель, а не потребитель:
-//     ввод дублируется, и отбирать его у Steam Input нельзя — иначе сломается
-//     сам геймпад. Отсюда же ограничение: если Steam уже захватил устройство,
-//     мы не получим ничего, и это законный исход замера, а не поломка.
+//  1. **Never open `hidraw`** (ADR 0002, F8: opening it drops the controller
+//     into lizard mode). Only `/dev/input/event*`.
+//  2. **Grab nothing** (`EVIOCGRAB`). We are a reader, not a consumer:
+//     input is duplicated, and we must not take it from Steam Input, or the
+//     gamepad itself breaks. Hence a limit: if Steam already grabbed the device,
+//     we get nothing, and that is a valid result of the measurement, not a breakage.
 //
-// Имя устройства спрашивается у `/proc/bus/input/devices`, а не ioctl'ом
-// `EVIOCGNAME`: ioctl из bun не вызвать, а файл есть на любом ядре и говорит
-// то же самое.
+// The device name comes from `/proc/bus/input/devices`, not from the ioctl
+// `EVIOCGNAME`: bun cannot call an ioctl, and the file exists on any kernel and says
+// the same thing.
 
 import { createReadStream } from 'node:fs'
 
-/** Тип события ядра. Больше этих четырёх в контроллере не встречается. */
+/** Kernel event type. The controller sends no types beyond these. */
 export const EV = { SYN: 0x00, KEY: 0x01, REL: 0x02, ABS: 0x03, MSC: 0x04 } as const
 
-/** Одна запись `struct input_event`: на 64-битном ядре ровно 24 байта. */
+/** One `struct input_event` record: exactly 24 bytes on a 64-bit kernel. */
 export const EVENT_SIZE = 24
 
 export interface InputEvent {
-  /** Время ядра, мс. Нужно, чтобы отличить «палец ведёт» от «дрожит контакт». */
+  /** Kernel time, ms. It tells "the finger moves" from "the contact jitters". */
   timeMs: number
   type: number
   code: number
@@ -44,14 +44,14 @@ export interface InputEvent {
 
 export interface InputDevice {
   name: string
-  /** `eventN` — то, что лежит в `/dev/input/`. */
+  /** `eventN`: the name under `/dev/input/`. */
   handlers: string[]
   path?: string
 }
 
 /**
- * Устройства из `/proc/bus/input/devices`. Блок на устройство, `N:` — имя,
- * `H:` — обработчики. Формат стабилен с 2.6 и одинаков на любом ядре.
+ * Devices from `/proc/bus/input/devices`. One block per device, `N:` is the name,
+ * `H:` is the handlers. The format is stable since 2.6 and the same on any kernel.
  */
 export function parseProcDevices (text: string): InputDevice[] {
   const out: InputDevice[] = []
@@ -69,22 +69,22 @@ export function parseProcDevices (text: string): InputDevice[] {
   return out
 }
 
-/** Сырой контроллер Deck — его читаем мы. */
+/** The raw Deck controller: we read it. */
 const RAW = /Valve Software Steam (Deck )?Controller/i
-/** Виртуальный геймпад Steam Input — это видит игра. */
+/** The Steam Input virtual gamepad: the game sees it. */
 const VIRTUAL = /X-?Box|Steam Virtual Gamepad/i
 
 export type DeviceRole = 'raw controller' | 'game gamepad'
 export interface WatchedDevice extends InputDevice { role: DeviceRole, path: string }
 
 /**
- * Устройства, которые нужно слушать, чтобы ответить на вопрос замера. Их два
- * рода, и оба обязательны: сырой контроллер показывает, что доступно НАМ, а
- * виртуальный геймпад Steam Input — что при том же жесте достаётся ИГРЕ.
- * Без второго «игра ничего не получила» остаётся словами.
+ * The devices to listen to in order to answer the measurement question. There are two
+ * kinds, and both are required: the raw controller shows what is available to US, and
+ * the Steam Input virtual gamepad shows what the GAME gets from the same gesture.
+ * Without the second one, "the game got nothing" stays an unproven claim.
  *
- * Одно физическое устройство часто даёт несколько `eventN` — кнопки и оси
- * порознь. Слушаются все: тачпад легко оказывается ровно в пропущенном.
+ * One physical device often gives several `eventN`: buttons and axes
+ * separately. We listen to all of them: the trackpad easily ends up in the one we skip.
  */
 export function watchedDevices (devices: InputDevice[]): WatchedDevice[] {
   const out: WatchedDevice[] = []
@@ -103,11 +103,11 @@ export function watchedDevices (devices: InputDevice[]): WatchedDevice[] {
   return out
 }
 
-// ── имена кодов ──────────────────────────────────────────────────────────────
+// ── code names ────────────────────────────────────────────────────────────────
 //
-// Только то, что реально приезжает с геймпада. Незнакомый код печатается числом,
-// а не выдумывается: назвать ось неправильно хуже, чем не назвать — по неверному
-// имени потом строится раскладка.
+// Only what the gamepad really sends. An unknown code prints as a number
+// and is not invented: a wrong axis name is worse than no name, because a layout
+// is later built on the wrong name.
 
 const ABS_NAMES: Record<number, string> = {
   0x00: 'ABS_X', 0x01: 'ABS_Y', 0x02: 'ABS_Z',
@@ -134,7 +134,7 @@ const KEY_NAMES: Record<number, string> = {
   0x2c2: 'BTN_TRIGGER_HAPPY3', 0x2c3: 'BTN_TRIGGER_HAPPY4'
 }
 
-/** Человекочитаемое имя кода. Неизвестный — шестнадцатеричным числом. */
+/** Human-readable code name. An unknown code is a hex number. */
 export function codeName (type: number, code: number): string {
   const hex = `0x${code.toString(16)}`
   if (type === EV.ABS) return ABS_NAMES[code] ?? `ABS(${hex})`
@@ -146,9 +146,9 @@ export function codeName (type: number, code: number): string {
 }
 
 /**
- * Байты → события. Возвращает разобранные записи и **хвост**: чтение из
- * символьного устройства режется по границе буфера, а не записи, и потерянные
- * четыре байта сдвинули бы все последующие события.
+ * Bytes → events. Returns the parsed records and the **tail**: a read from
+ * a character device is cut at the buffer boundary, not the record boundary, and four
+ * lost bytes would shift all later events.
  */
 export function decodeEvents (buf: Uint8Array): { events: InputEvent[], rest: Uint8Array } {
   const events: InputEvent[] = []
@@ -157,7 +157,7 @@ export function decodeEvents (buf: Uint8Array): { events: InputEvent[], rest: Ui
 
   for (let i = 0; i < whole; i++) {
     const at = i * EVENT_SIZE
-    // timeval: два поля по 8 байт (64-битное ядро), затем type, code, value.
+    // timeval: two 8-byte fields (64-bit kernel), then type, code, value.
     const sec = view.getBigUint64(at, true)
     const usec = view.getBigUint64(at + 8, true)
     events.push({
@@ -171,7 +171,7 @@ export function decodeEvents (buf: Uint8Array): { events: InputEvent[], rest: Ui
   return { events, rest: buf.subarray(whole * EVENT_SIZE) }
 }
 
-/** Поток байтов → поток событий, с сшиванием записей на границах чанков. */
+/** Byte stream → event stream, joining records across chunk boundaries. */
 export async function * decodeStream (
   chunks: AsyncIterable<Uint8Array>
 ): AsyncGenerator<InputEvent> {
@@ -182,14 +182,14 @@ export async function * decodeStream (
     buf.set(tail)
     buf.set(chunk, tail.length)
     const { events, rest } = decodeEvents(buf)
-    tail = rest.slice() // копия: rest смотрит в буфер, который сейчас переиспользуют
+    tail = rest.slice() // copy: rest points into a buffer that is about to be reused
     for (const event of events) yield event
   }
 }
 
 /**
- * События устройства. Открывается на чтение и НЕ захватывается: параллельно с
- * нами их читает Steam Input, и отобрать их у него значило бы сломать геймпад.
+ * Device events. The device opens for reading and is NOT grabbed: Steam Input
+ * reads them in parallel with us, and taking them from it would break the gamepad.
  */
 export function openEvents (path: string): AsyncGenerator<InputEvent> {
   return decodeStream(createReadStream(path) as AsyncIterable<Uint8Array>)

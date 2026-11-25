@@ -1,22 +1,22 @@
 #!/bin/sh
-# Шаблон раскладки Steam Input poe-deck: положить, убрать, сверить.
+# Steam Input layout template of poe-deck: install, remove, check.
 #
-# Раскладка больше не набирается руками по трём активаторам: шаблон
-# кладётся в controller_base/templates каталога данных Steam, где лежат штатные
-# шаблоны Valve. Расчёт — что Steam покажет его в Controller Settings → Browse
-# Layouts → Templates, и игрок получит все жесты одним Apply. На живом Deck это
-# ещё не сверено (ADR 0002, Ф17); не покажет — запасной путь там же.
-# Файл — steam/controller_neptune_poe_deck.vdf.
+# The layout is no longer entered by hand with three activators: the template
+# goes to controller_base/templates in the Steam data directory, next to the
+# stock Valve templates. The idea is that Steam shows it in Controller Settings →
+# Browse Layouts → Templates, and the player gets all gestures with one Apply.
+# This is not yet checked on a live Deck (ADR 0002, F17); if Steam does not show
+# it, the fallback path is in the same ADR. File: steam/controller_neptune_poe_deck.vdf.
 #
 #   sh tools/steam-template.sh install|remove|check
 #
-# install  положить шаблон (повторный запуск перезаписывает его новой версией)
-# remove   убрать шаблон; применённую к игре раскладку не трогает — она живёт
-#          в аккаунте Steam игрока, а не у нас
-# check    0 — лежит ровно наша версия, 1 — нет или чужая версия
+# install  put the template in place (a second run overwrites it with the new version)
+# remove   remove the template; does not touch the layout applied to the game, which
+#          lives in the Steam account of the player, not with us
+# check    0: exactly our version is in place, 1: missing or a different version
 #
-# Каталог данных Steam — STEAM_DIR, по умолчанию ~/.local/share/Steam (так на
-# SteamOS). Всё в $HOME, sudo не нужен.
+# The Steam data directory is STEAM_DIR, by default ~/.local/share/Steam (as on
+# SteamOS). Everything is in $HOME, no sudo is needed.
 
 set -eu
 
@@ -28,8 +28,8 @@ DEST="$DIR/controller_neptune_poe_deck.vdf"
 case "${1:-}" in
   install)
     [ -f "$SRC" ] || { echo "✗  layout template missing from the package: $SRC"; exit 1; }
-    # Нет каталога Steam — не Deck или Steam ни разу не запускался. Установку
-    # демона это не валит: раскладка нужна только в Game Mode.
+    # No Steam directory: not a Deck, or Steam never ran. This does not fail the
+    # daemon install: the layout is needed only in Game Mode.
     [ -d "$STEAM_DIR/controller_base" ] || {
       echo "⚠  no $STEAM_DIR/controller_base — Steam layout template not installed"
       exit 0

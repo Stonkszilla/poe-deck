@@ -1,17 +1,17 @@
-// Курс внутриигрового Currency Exchange (NPC Faustus) — ориентир рядом с ценой трейда.
+// Rate of the in-game Currency Exchange (NPC Faustus): a reference next to the trade price.
 //
-// Trade API этого рынка не видит: у Faustus свой стакан, и в выдаче instant
-// buyout трейда тот же Orb of Scouring стоит в разы иначе. Замер 20.11, лига
-// Covens: трейд дал стак 30 за 10 chaos, у Faustus в игре курс 1 : 1.39, то есть
-// около 22 chaos за стак.
+// The trade API does not see this market: Faustus has its own order book, and in the instant
+// buyout results of trade the same Orb of Scouring costs several times different. Measured 20.11,
+// league Covens: trade gave a stack of 30 for 10 chaos, the in-game Faustus rate was 1 : 1.39, that is
+// about 22 chaos per stack.
 //
-// Источник — poe.ninja: он собирает Currency Exchange через API GGG и отдаёт
-// сводку без ключа. Сам API GGG (`/currency-exchange`) требует OAuth-приложения
-// со scope `service:cxapi` и без него отвечает 401 — игроку его не получить.
+// Source: poe.ninja. It collects Currency Exchange through the GGG API and returns
+// a summary without a key. The GGG API itself (`/currency-exchange`) needs an OAuth application
+// with scope `service:cxapi` and without it answers 401. A player cannot get one.
 //
-// Ориентир, а не цена: число — сводка poe.ninja по сделкам, а не стакан,
-// который можно исполнить сейчас. Ошибка источника цену не ломает — ориентира
-// просто нет, и об этом пишет журнал.
+// A reference, not a price: the number is the poe.ninja summary of trades, not an order book
+// that can be filled now. A source error does not break the price: there is simply
+// no reference, and the log says so.
 
 import { tradeFetch } from './client'
 import type { Rate } from './price'
@@ -20,9 +20,9 @@ import type { PricedItem } from './query'
 export const NINJA_EXCHANGE = 'https://poe.ninja/poe1/api/economy/exchange/current/overview'
 
 /**
- * Разделы сводки, в которых ищем предмет, по порядку. Валюта первой: за ней
- * приходят почти все нажатия, и тогда запрос один. Остальные спрашиваются, только
- * если предмета не нашлось раньше, и каждый живёт в кэше своё время.
+ * Summary sections to search for the item, in order. Currency is first: almost all
+ * presses are for it, and then there is one request. The others are asked only
+ * if the item was not found earlier, and each lives in the cache for its own time.
  */
 export const NINJA_TYPES = [
   'Currency',
@@ -37,12 +37,12 @@ export const NINJA_TYPES = [
 ] as const
 
 /**
- * Сколько ждём poe.ninja. Меньше, чем трейд: запрос идёт параллельно с ценой,
- * и ориентир не имеет права задержать её на экране.
+ * How long we wait for poe.ninja. Less than trade: the request runs in parallel with the price,
+ * and the reference must not delay the price on screen.
  */
 export const NINJA_TIMEOUT_MS = 4_000
 
-/** Cloudflare перед poe.ninja держит сводку 30 минут — чаще спрашивать незачем. */
+/** Cloudflare in front of poe.ninja keeps the summary for 30 minutes: no reason to ask more often. */
 const NINJA_TTL_MS = 30 * 60_000
 
 export interface ExchangeOverview {
@@ -51,19 +51,19 @@ export interface ExchangeOverview {
   items?: Array<{ id: string, name?: string | null }>
 }
 
-/** Курс Faustus за одну штуку. */
+/** Faustus rate for one item. */
 export interface ExchangeReference extends Rate {
-  /** Оборот по сводке в её основной валюте: ноль — курс никто не исполнял. */
+  /** Volume in the summary, in its main currency: zero means nobody filled the rate. */
   volume: number
 }
 
 /**
- * Предмет в сводке. Id строк poe.ninja совпадают с тегами обмена трейда
- * (`scour`, `chaos`, `divine`) — сначала по тегу, потом по английскому имени:
- * у фрагментов теги и id расходятся.
+ * The item in the summary. poe.ninja row ids match the trade exchange tags
+ * (`scour`, `chaos`, `divine`). Search by tag first, then by English name:
+ * for fragments, tags and ids differ.
  *
- * Основная валюта сводки (chaos) сама себе стоит 1, поэтому её курс берётся во
- * второй валюте: «chaos за divine», как и у трейда.
+ * The main currency of the summary (chaos) costs 1 of itself, so its rate is taken in the
+ * second currency: "chaos per divine", as in trade.
  */
 export function referenceFrom (overview: ExchangeOverview, item: PricedItem): ExchangeReference | undefined {
   const lines = overview.lines ?? []
@@ -84,14 +84,14 @@ export function referenceFrom (overview: ExchangeOverview, item: PricedItem): Ex
 
 const cache = new Map<string, { at: number, overview: ExchangeOverview }>()
 
-/** Тесты начинают с пустого кэша, как и новый запуск демона. */
+/** Tests start with an empty cache, like a new start of the daemon. */
 export function resetNinjaCache (): void {
   cache.clear()
 }
 
 /**
- * Сводка одного раздела по лиге. Неизвестная лига у poe.ninja — не ошибка, а
- * пустой список, и он тоже кэшируется: спрашивать его снова через минуту незачем.
+ * Summary of one section for a league. An unknown league at poe.ninja is not an error but
+ * an empty list, and it is cached too: no reason to ask for it again a minute later.
  */
 export async function exchangeOverview (league: string, type: string): Promise<ExchangeOverview> {
   const key = `${league}\n${type}`
@@ -107,8 +107,8 @@ export async function exchangeOverview (league: string, type: string): Promise<E
 }
 
 /**
- * Курс Faustus для предмета или `undefined`. Не бросает: ориентир — добавка к
- * цене, и его беда (сеть, таймаут, новая форма ответа) остаётся в журнале.
+ * Faustus rate for the item, or `undefined`. Does not throw: the reference is an addition to
+ * the price, and its failure (network, timeout, new response form) stays in the log.
  */
 export async function exchangeReference (
   item: PricedItem,

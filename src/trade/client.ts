@@ -1,22 +1,22 @@
-// Транспорт к trade API. Наш код; заимствован здесь только список хостов —
-// он у донора (`main/src/proxy.ts:5-12`) и взят идеей, а не строками.
+// Transport to the trade API. Our own code; the only borrowed part is the host
+// list. It comes from the donor (`main/src/proxy.ts:5-12`) as an idea, not as lines.
 //
-// Что здесь заменяет Electron. У донора запросы шли не напрямую, а через прокси
-// в хост-процессе: он держал allowlist хостов, вырезал `sec-*`/`host`/`origin`,
-// подставлял user-agent Electron и ходил `net.request({ useSessionCookies: true })` —
-// то есть куками сессии Electron, куда POESESSID попадал после логина человека
-// внутри `<webview>`. Ни Electron, ни `<webview>` у нас нет, поэтому:
+// What replaces Electron here. In the donor, requests did not go directly but through
+// a proxy in the host process: it kept a host allowlist, removed `sec-*`/`host`/`origin`,
+// set the Electron user-agent and called `net.request({ useSessionCookies: true })`,
+// that is, with the Electron session cookies, where POESESSID landed after a human
+// logged in inside `<webview>`. We have neither Electron nor `<webview>`, so:
 //
-//   - allowlist — свой и обязательный: без прокси ничто больше не мешает уйти
-//     запросу на произвольный хост;
-//   - заголовки собираем сами и ровно те, что нужны. Резать `sec-*` не приходится:
-//     их добавлял браузер, а `fetch` под bun не добавляет ничего;
-//   - user-agent — свой, называющий проект и способ связаться. GGG просят
-//     представляться, и на живом API это работает (замер в tools/trade-probe.ts);
-//   - cookie jar — одна переменная окружения. Замер показал, что для прайс-чека
-//     POESESSID не нужен вовсе (см. docs/recon/poesessid.md), поэтому механизм
-//     оставлен минимальным: понадобится — есть куда положить, не понадобится —
-//     не мешает.
+//   - the allowlist is our own and mandatory: without the proxy nothing else stops
+//     a request to an arbitrary host;
+//   - we build the headers ourselves, exactly the ones we need. No need to remove `sec-*`:
+//     the browser added them, and `fetch` under bun adds nothing;
+//   - the user-agent is our own and names the project and a contact. GGG asks apps
+//     to identify themselves, and on the live API this works (measured in tools/trade-probe.ts);
+//   - the cookie jar is one environment variable. Measurement showed that the price
+//     check does not need POESESSID at all (see docs/recon/poesessid.md), so the mechanism
+//     stays minimal: if we need it, there is a place for it; if not, it does not
+//     get in the way.
 
 import {
   RATE_LIMIT_RULES,
@@ -25,7 +25,7 @@ import {
   preventQueueCreation
 } from './rate-limit'
 
-/** Куда вообще разрешено ходить. Всё остальное — исключение, а не молчаливый запрос. */
+/** Where requests may go at all. Anything else is an exception, not a silent request. */
 export const ALLOWED_HOSTS = new Set([
   'www.pathofexile.com',
   'ru.pathofexile.com',
@@ -36,20 +36,20 @@ export const ALLOWED_HOSTS = new Set([
 ])
 
 /**
- * Сколько ждём ответа GGG, прежде чем признать запрос потерянным.
+ * How long we wait for a GGG answer before we treat the request as lost.
  *
- * Без предела `fetch` под bun ждёт вечно, и панель вечно показывает «ищу…».
- * Прогон #107: synthesised-кольцо с десятком модов подвешивало прайс-чек
- * насмерть, и выйти из этого состояния можно было только перезапуском демона.
- * Потерянный запрос — нормальная ошибка, о которой надо сказать, а не висеть.
+ * Without a limit, `fetch` under bun waits forever, and the panel shows "searching..." forever.
+ * Run #107: a synthesised ring with a dozen mods hung the price check
+ * for good, and only a daemon restart got out of that state.
+ * A lost request is a normal error that we must report, not hang on.
  */
 export const REQUEST_TIMEOUT_MS = 12_000
 
 /**
- * Представляемся честно: имя, версия и где нас найти. Форма — из требований GGG
- * к сторонним приложениям (pathofexile.com/developer/docs, § User-Agent):
- * `имя/версия (contact: …)`. Префикса `OAuth <clientId>` нет: OAuth-клиента у
- * нас нет, trade-сайт его не спрашивает. Версия правится вместе с package.json.
+ * We identify ourselves honestly: name, version and where to find us. The form comes
+ * from the GGG rules for third-party apps (pathofexile.com/developer/docs, § User-Agent):
+ * `name/version (contact: …)`. There is no `OAuth <clientId>` prefix: we have no
+ * OAuth client, and the trade site does not ask for one. Update the version together with package.json.
  */
 export const USER_AGENT = 'poe-deck/0.1.0 (contact: https://github.com/Stonkszilla/poe-deck/issues)'
 
@@ -67,8 +67,8 @@ export function tradeEndpoint (realm: Realm = 'pc'): string {
 }
 
 /**
- * POESESSID, если он вообще задан. Для прайз-чека не требуется — см. шапку файла;
- * переменная существует ради приватных лиг и запросов от имени аккаунта.
+ * POESESSID, if it is set at all. The price check does not need it (see the file header);
+ * the variable exists for private leagues and for requests on behalf of an account.
  */
 export function sessionId (): string | undefined {
   return process.env.POE_DECK_POESESSID || undefined
@@ -81,18 +81,18 @@ export class BlockedHostError extends Error {
   }
 }
 
-/** Группа лимитов trade API — так она называется в журнале. */
+/** Rate limit group of the trade API, as the log names it. */
 export type LimitGroup = 'search' | 'fetch' | 'exchange'
 
 /**
- * Отказ по лимиту — с моментом, когда можно повторить. Игроку нужно
- * не «подожди», а «сколько»: сервер это число присылает, и молчать о нём значит
- * заставить жать кнопку наугад. `source` различает отказ сервера (429) и отказ
- * нашего лимитера, который до сети не дошёл: в журнале прогона #121 они
- * выглядели одинаково.
+ * Rate limit refusal, with the moment when a retry is possible. The player needs
+ * not "wait" but "how long": the server sends this number, and to hide it means
+ * to make the player press the button at random. `source` tells a server refusal (429)
+ * from a refusal of our limiter, which never reached the network: in the log of run #121
+ * they looked the same.
  *
- * Сообщение оставлено прежним, «Retry after N seconds»: его читают строки
- * журнала, написанные до типа.
+ * The message stays as before, "Retry after N seconds": log lines written
+ * before this type read it.
  */
 export class RateLimitError extends Error {
   constructor (
@@ -107,8 +107,8 @@ export class RateLimitError extends Error {
 }
 
 /**
- * Техработы GGG: 503 или страница maintenance вместо JSON. От «нет сети» это
- * отличается тем, что делать: Wi-Fi тут ни при чём, ждать надо GGG.
+ * GGG maintenance: 503 or a maintenance page instead of JSON. It differs from "no network"
+ * in what to do: Wi-Fi is not the cause, the player must wait for GGG.
  */
 export class MaintenanceError extends Error {
   constructor (public status: number) {
@@ -118,10 +118,10 @@ export class MaintenanceError extends Error {
 }
 
 /**
- * Лига, которой трейд не знает: кончилась, переименована или задана с опечаткой.
- * Сам трейд отвечает на неё `400 {"code":2,"message":"Invalid query"}` — тем же,
- * что на кривой запрос (замер 12.11.2026, лига Necropolis). Поэтому тип ставится
- * только после сверки со списком лиг трейда, а не по коду ответа.
+ * A league that trade does not know: it ended, was renamed or has a typo.
+ * Trade itself answers it with `400 {"code":2,"message":"Invalid query"}`, the same
+ * as for a malformed query (measured 12.11.2026, league Necropolis). So we set this type
+ * only after a check against the trade league list, not by the response code.
  */
 export class UnknownLeagueError extends Error {
   constructor (public league: string) {
@@ -130,7 +130,7 @@ export class UnknownLeagueError extends Error {
   }
 }
 
-/** Ответ пришёл, но не JSON и не техработы — например, 502 от Cloudflare. */
+/** A response came, but it is neither JSON nor maintenance, for example a 502 from Cloudflare. */
 export class TradeHttpError extends Error {
   constructor (public status: number) {
     super(`trade answered HTTP ${status}`)
@@ -138,7 +138,7 @@ export class TradeHttpError extends Error {
   }
 }
 
-/** Запрос ушёл, ответа нет за `REQUEST_TIMEOUT_MS`. */
+/** The request went out, and no answer came within `REQUEST_TIMEOUT_MS`. */
 export class TradeTimeoutError extends Error {
   constructor () {
     super(`trade did not answer in ${REQUEST_TIMEOUT_MS / 1000}s`)
@@ -147,10 +147,10 @@ export class TradeTimeoutError extends Error {
 }
 
 /**
- * Единственная дверь наружу. Проверяет хост, собирает заголовки, подставляет
- * сессию, если она есть. Лимиты здесь НЕ трогаются — это транспорт, а вежливость
- * живёт уровнем выше (`search`/`fetchResults`), потому что группа лимита зависит
- * от эндпойнта, а не от того, что мы куда-то пошли.
+ * The only door to the outside. It checks the host, builds the headers and adds
+ * the session if there is one. Rate limits are NOT handled here: this is transport, and
+ * politeness lives one level up (`search`/`fetchResults`), because the limit group depends
+ * on the endpoint, not on the fact that we sent a request somewhere.
  */
 export async function tradeFetch (url: string, init: RequestInit = {}): Promise<Response> {
   const parsed = new URL(url)
@@ -164,8 +164,8 @@ export async function tradeFetch (url: string, init: RequestInit = {}): Promise<
   if (init.body && !headers.has('content-type')) {
     headers.set('content-type', 'application/json')
   }
-  // Cookie сессии — только хостам GGG: poe.ninja и poeprices она не нужна, а
-  // отдать её чужому сервису значит отдать вход в аккаунт игрока.
+  // The session cookie goes only to GGG hosts: poe.ninja and poeprices do not need it, and
+  // to give it to a third-party service means to give away access to the account of the player.
   const poesessid = sessionId()
   if (poesessid && Object.values(REALM_HOST).includes(parsed.host)) headers.set('cookie', `POESESSID=${poesessid}`)
 
@@ -176,8 +176,8 @@ export async function tradeFetch (url: string, init: RequestInit = {}): Promise<
       signal: init.signal ?? AbortSignal.timeout(REQUEST_TIMEOUT_MS)
     })
   } catch (err) {
-    // `TimeoutError`/`AbortError` наружу уходят своим типом: у потерянного
-    // ответа свой кадр, а не общий «request failed».
+    // `TimeoutError`/`AbortError` go out as their own type: a lost
+    // answer has its own frame, not the generic "request failed".
     const name = (err as { name?: string }).name
     if (name === 'TimeoutError' || name === 'AbortError') throw new TradeTimeoutError()
     throw err
@@ -185,14 +185,14 @@ export async function tradeFetch (url: string, init: RequestInit = {}): Promise<
 }
 
 /**
- * Строка журнала с заголовками лимита из ответа GGG. Пишется на КАЖДЫЙ ответ
- * trade API, а не только на отказ: правило лимитера видно и в успешном ответе,
- * а отказ, ради которого всё затевалось (прогон #121), не воспроизводится по
- * заказу.
+ * Log line with the rate limit headers from a GGG response. It is written for EVERY
+ * trade API response, not only for a refusal: the limiter rule is visible in a successful
+ * response too, and the refusal that started all this (run #121) does not reproduce on
+ * demand.
  *
- * Значения выводятся как есть, без пересчёта: `ip=5:10:60` — 5 запросов за
- * 10 с, штраф 60 с; `ip-state=1:10:0` — сколько из них уже потрачено и сколько
- * секунд штрафа осталось. Ответ без заголовков (не trade-эндпойнт) строки не даёт.
+ * Values are printed as is, without conversion: `ip=5:10:60` is 5 requests per
+ * 10 s with a 60 s penalty; `ip-state=1:10:0` is how many of them are already used and how many
+ * seconds of penalty are left. A response without the headers (not a trade endpoint) gives no line.
  */
 export function rateLimitLine (group: LimitGroup, response: Pick<Response, 'status' | 'headers'>): string | undefined {
   const { headers } = response
@@ -216,8 +216,8 @@ function logRateLimit (group: LimitGroup, response: Response): void {
 }
 
 /**
- * Отказ нашего лимитера — без запроса в сеть. Его тоже надо отличать от отказа
- * сервера: в журнале прогона #121 оба выглядели бы одинаковым `rate limit`.
+ * A refusal of our limiter, with no network request. It also must differ from a server
+ * refusal: in the log of run #121 both would look like the same `rate limit`.
  */
 function guardQueue (
   group: LimitGroup,
@@ -236,22 +236,22 @@ function guardQueue (
   }
 }
 
-// ── окно штрафа после 429 ────────────────────────────────────────────────────
+// ── penalty window after 429 ─────────────────────────────────────────────────
 //
-// Лимитер донора знает правила, но не штраф: после 429 сервер не принимает
-// ничего, пока не выйдет `Retry-After`, а наш стек к этому времени может
-// считать себя свободным. Без окна каждое нажатие в штрафе уходило бы в сеть
-// и продлевало штраф (у правила `5:10:60` он 60 с за превышение).
+// The donor limiter knows the rules but not the penalty: after 429 the server accepts
+// nothing until `Retry-After` ends, and by then our stack can
+// consider itself free. Without the window, each press during the penalty would go to the network
+// and extend the penalty (for the rule `5:10:60` it is 60 s per violation).
 
-/** До какого момента группа под штрафом сервера, мс эпохи. */
+/** Until what moment the group is under a server penalty, epoch ms. */
 const penaltyUntil = new Map<LimitGroup, number>()
 
-/** Тесты начинают без штрафа, как и новый запуск демона. */
+/** Tests start without a penalty, as a new daemon start does. */
 export function resetPenalties (): void {
   penaltyUntil.clear()
 }
 
-/** В окне штрафа запрос не уходит вовсе: отказ без сети с тем же сроком. */
+/** Inside the penalty window the request does not go out at all: a refusal without network, with the same deadline. */
 function guardPenalty (group: LimitGroup, groups: LimitGroup[]): void {
   const now = Date.now()
   const until = Math.max(0, ...groups.map(name => penaltyUntil.get(name) ?? 0))
@@ -261,9 +261,9 @@ function guardPenalty (group: LimitGroup, groups: LimitGroup[]): void {
 }
 
 /**
- * Сколько ждать после 429, мс. `Retry-After` главнее; без него — остаток
- * штрафа из третьего поля `x-rate-limit-<rule>-state` (`6:10:60` — 60 с).
- * Ни того, ни другого — минута: столько штрафует самое короткое правило поиска.
+ * How long to wait after 429, ms. `Retry-After` wins; without it, the rest of the
+ * penalty from the third field of `x-rate-limit-<rule>-state` (`6:10:60` is 60 s).
+ * Neither one: a minute, the penalty of the shortest search rule.
  */
 export function retryAfterMs (headers: Headers): number {
   const header = Number(headers.get('retry-after'))
@@ -278,10 +278,10 @@ export function retryAfterMs (headers: Headers): number {
 }
 
 /**
- * Ответ → JSON или типизированный отказ. Статус смотрится ДО разбора тела:
- * на 429 срок повтора живёт в заголовках, а не в теле, а на 503 JSON-а нет
- * вовсе — `response.json()` бросил бы `JSON Parse error`, и на панели это
- * читалось бы как поломка poe-deck, а не техработы GGG.
+ * Response → JSON or a typed refusal. We check the status BEFORE we parse the body:
+ * on 429 the retry deadline is in the headers, not in the body, and on 503 there is no JSON
+ * at all. `response.json()` would throw `JSON Parse error`, and the panel would show it
+ * as a poe-deck failure, not as GGG maintenance.
  */
 async function answerOf<T> (group: LimitGroup | undefined, response: Response): Promise<T & TradeError> {
   if (response.status === 429 && group) {
@@ -295,17 +295,17 @@ async function answerOf<T> (group: LimitGroup | undefined, response: Response): 
   try {
     return JSON.parse(body) as T & TradeError
   } catch {
-    // Страница техработ приходит HTML-ем и не обязательно с 503.
+    // The maintenance page comes as HTML and not always with 503.
     if (/maintenance/i.test(body)) throw new MaintenanceError(response.status)
     throw new TradeHttpError(response.status)
   }
 }
 
 /**
- * Знает ли трейд эту лигу. Спрашиваем `/api/trade/data/leagues` — список самого
- * трейда, а не `/api/leagues`: второй как раз и отдаёт лигу, которой трейд уже
- * не знает. Ответ без лимитных заголовков и кэшируется на 120 с (замер
- * 12.11.2026) — на отказе спросить его дёшево. Не ответил — `undefined`.
+ * Does trade know this league. We ask `/api/trade/data/leagues`, the list of trade
+ * itself, not `/api/leagues`: the latter is exactly the one that returns a league trade
+ * no longer knows. The response has no limit headers and is cached for 120 s (measured
+ * 12.11.2026), so it is cheap to ask on a refusal. No answer gives `undefined`.
  */
 export async function tradeKnowsLeague (league: string, realm: Realm): Promise<boolean | undefined> {
   try {
@@ -319,7 +319,7 @@ export async function tradeKnowsLeague (league: string, realm: Realm): Promise<b
   }
 }
 
-/** Отказ с кодом 2 «Invalid query» сверяется с лигами трейда; прочие уходят как были. */
+/** A refusal with code 2 "Invalid query" is checked against the trade leagues; others go out as they are. */
 async function unwrapForLeague<T> (data: T & TradeError, league: string, realm: Realm): Promise<T> {
   if (data.error?.code === 2 && await tradeKnowsLeague(league, realm) === false) {
     throw new UnknownLeagueError(league)
@@ -337,16 +337,16 @@ function unwrap<T> (data: T & TradeError): T {
 export interface SearchResult { id: string, result: string[], total: number }
 
 /**
- * `POST /api/trade/search/<league>`. Тело приходит готовым — его построение
- * из разобранного предмета живёт отдельно и в этот файл не заглядывает.
+ * `POST /api/trade/search/<league>`. The body comes ready: the code that builds it
+ * from the parsed item lives elsewhere and does not look into this file.
  */
 export async function search (
   body: unknown,
   leagueId: string,
   realm: Realm = 'pc'
 ): Promise<SearchResult> {
-  // Проверяем не только SEARCH: за поиском всегда идёт fetch, и упереться
-  // в его лимит уже после того, как поиск потрачен, — худший из вариантов.
+  // We check not only SEARCH: a fetch always follows a search, and to hit
+  // its limit after the search is already spent is the worst case.
   guardQueue('search', [
     { count: 1, limiters: RATE_LIMIT_RULES.SEARCH },
     { count: 1, limiters: RATE_LIMIT_RULES.FETCH }
@@ -366,9 +366,9 @@ export async function search (
 export interface ExchangeResult<T = unknown> { id: string, result: Record<string, T>, total: number }
 
 /**
- * `POST /api/trade/exchange/<league>` — ветка курса валюты. Своя группа лимитов
- * (EXCHANGE) и своя форма ответа: объявления приезжают прямо здесь, отдельного
- * `fetch` не нужно. Ради этого развилка и выбирается ДО запроса.
+ * `POST /api/trade/exchange/<league>`, the currency rate branch. It has its own limit group
+ * (EXCHANGE) and its own response form: the listings arrive right here, no separate
+ * `fetch` is needed. This is why the branch is chosen BEFORE the request.
  */
 export async function exchange<T = unknown> (
   body: unknown,
@@ -388,18 +388,18 @@ export async function exchange<T = unknown> (
   return unwrapForLeague(await answerOf<ExchangeResult<T>>('exchange', response), leagueId, realm)
 }
 
-/** Лига в ответе `/api/leagues`: только то, что нужно выбору. */
+/** A league in the `/api/leagues` response: only what the choice needs. */
 export interface LeagueEntry { id: string, event?: boolean | null, rules: Array<{ id: string }> }
 
 /**
- * Текущая софткор trade-лига из ответа `/api/leagues`. Правило донора
- * (`background/Leagues.ts:57-75`) — выкинуть SSF (`NoParties`) и Ruthless
- * (`HardMode`, кроме событий) — дополнено: отсеивается ЛЮБАЯ лига с правилом
- * `Hardcore`, а не одна постоянная. Донор брал второй элемент списка и полагался
- * на то, что временная HC идёт после временной SC; игроку обещана именно
- * софткор, и это обещание держит фильтр, а не порядок ответа.
+ * The current softcore trade league from the `/api/leagues` response. The donor rule
+ * (`background/Leagues.ts:57-75`), drop SSF (`NoParties`) and Ruthless
+ * (`HardMode`, except events), is extended: we drop ANY league with the rule
+ * `Hardcore`, not only the permanent one. The donor took the second list item and relied
+ * on the temporary HC coming after the temporary SC; the player is promised
+ * softcore, and the filter keeps this promise, not the response order.
  *
- * Временной лиги нет (между лигами, замер 12.11.2026) — Standard.
+ * No temporary league (between leagues, measured 12.11.2026) gives Standard.
  */
 export function pickTradeLeague (leagues: LeagueEntry[]): string {
   const trade = leagues.filter(league =>
@@ -412,10 +412,10 @@ export function pickTradeLeague (leagues: LeagueEntry[]): string {
 }
 
 /**
- * Лига для поиска. `fixed` — лига, заданная руками: переменной
- * `POE_DECK_LEAGUE` или строкой `league` в конфиге игрока (src/config.ts).
- * Приватные лиги и «хочу посмотреть Standard» в правило выбора не укладываются
- * и укладываться не должны.
+ * The league for the search. `fixed` is a league set by hand: with the variable
+ * `POE_DECK_LEAGUE` or the `league` line in the player config (src/config.ts).
+ * Private leagues and "I want to look at Standard" do not fit the choice rule
+ * and must not.
  */
 export async function currentLeague (realm: Realm = 'pc', fixed = process.env.POE_DECK_LEAGUE): Promise<string> {
   if (fixed) return fixed
@@ -424,7 +424,7 @@ export async function currentLeague (realm: Realm = 'pc', fixed = process.env.PO
   return pickTradeLeague(await answerOf<LeagueEntry[]>(undefined, response))
 }
 
-/** `GET /api/trade/fetch/<ids>?query=<id>`. Не больше 10 идентификаторов за раз — предел API. */
+/** `GET /api/trade/fetch/<ids>?query=<id>`. No more than 10 ids at a time: the API limit. */
 export async function fetchResults<T = unknown> (
   queryId: string,
   resultIds: string[],

@@ -1,12 +1,12 @@
-# Сборка C-бинарей набора для Deck: gs-hotkey-probe, gs-panel,
-# gs-pointer, gs-clip. Собираются здесь, в CI, а не на Deck: у игрока нет ни
-# distrobox, ни компилятора.
+# Builds the C binaries of the Deck bundle: gs-hotkey-probe, gs-panel,
+# gs-pointer, gs-clip. They are built here, in CI, not on the Deck: the player
+# has no distrobox and no compiler.
 #
-# Debian 12, а не 13 и не Arch: бинарь требует ту версию glibc, с которой его
-# собрали, а на Deck своя. bookworm даёт glibc 2.36 — старше любой SteamOS 3.6+,
-# так что символов новее, чем есть на Deck, в бинарях не окажется. Сами
-# библиотеки (libX11, libXft, fontconfig, libwayland-client) берутся с Deck по
-# soname — их ABI стабилен, проверка — `ldd` на Deck (MODE=E2E).
+# Debian 12, not 13 and not Arch: a binary needs the glibc version it was
+# built against, and the Deck has its own. bookworm gives glibc 2.36, older than
+# any SteamOS 3.6+, so the binaries get no symbols newer than the Deck has. The
+# libraries themselves (libX11, libXft, fontconfig, libwayland-client) come from
+# the Deck by soname: their ABI is stable, and `ldd` on the Deck checks it (MODE=E2E).
 FROM debian:12-slim
 RUN apt-get update -qq && apt-get install -y -qq --no-install-recommends \
     gcc libc6-dev pkg-config binutils \

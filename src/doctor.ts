@@ -1,22 +1,22 @@
-// `poe-deck doctor` — самопроверка словами.
+// `poe-deck doctor`: a self-check in words.
 //
-// Игрок без нас не прочитает `journalctl` и не поймёт, какое звено отвалилось.
-// doctor проходит цепочку по порядку и на каждое звено печатает одну строку:
-// ✓ — работает, ✗ — что сломано и что сделать. Код выхода 0 только при всех ✓.
+// Without us, the player will not read `journalctl` and will not see which link broke.
+// doctor walks the chain in order and prints one line for each link:
+// ✓ means it works, ✗ means what is broken and what to do. Exit code 0 only if all are ✓.
 //
-//   конфиг → протокол gamescope → бинари → раскладка Steam Input → сеть → лига
-//   → курс Faustus (poe.ninja)
+//   config → gamescope protocol → binaries → Steam Input layout → network → league
+//   → Faustus rates (poe.ninja)
 //
-// Конфиг идёт первым: лига проверяется по тому, что в нём написано. Звенья не
-// обрываются на первом ✗ — игроку нужен весь список, а не первая беда.
+// The config goes first: the league check uses what the config says. The chain does
+// not stop at the first ✗: the player needs the full list, not the first problem.
 //
-// Запуск: `poe-deck doctor` у собранного файла (ci/bundle/entry.ts), из
-// исходников — `bun src/doctor.ts`. По SSH с mini:
+// Run: `poe-deck doctor` for the built file (ci/bundle/entry.ts), from the
+// sources: `bun src/doctor.ts`. Over SSH from mini:
 //
 //   ssh deck@<Deck> 'bash -c "~/poe-deck/poe-deck doctor"'
 //
-// Переменные сессии gamescope doctor берёт так же, как демон, — из
-// /run/user/<uid>/gamescope-environment, поэтому SSH-сессии они не нужны.
+// doctor gets the gamescope session variables the same way as the daemon, from
+// /run/user/<uid>/gamescope-environment, so the SSH session does not need them.
 
 import { accessSync, constants, existsSync } from 'node:fs'
 import { dirname } from 'node:path'
@@ -43,15 +43,15 @@ import { exchangeOverview } from './trade/ninja'
 export interface Check {
   name: string
   ok: boolean
-  /** Что видно: версия, путь, лига. */
+  /** What is seen: version, path, league. */
   detail: string
-  /** Что сделать. Только у ✗ — у ✓ делать нечего. */
+  /** What to do. Only for ✗: for ✓ there is nothing to do. */
   fix?: string
 }
 
 /**
- * Строки вывода одного звена. Подробность бывает многострочной (ошибки конфига —
- * по одной на строку файла); совет — отдельной строкой с отступом: его ищут глазами.
+ * Output lines of one link. The detail can be multi-line (config errors, one per
+ * file line); the fix is a separate indented line: the eye looks for it.
  */
 export function formatCheck (check: Check): string[] {
   const pad = ' '.repeat(13)
@@ -61,7 +61,7 @@ export function formatCheck (check: Check): string[] {
   return out
 }
 
-/** Пример конфига: в наборе — рядом с poe-deck, в исходниках — в config/. */
+/** Example config: in the bundle it is next to poe-deck, in the sources it is in config/. */
 function exampleConfig (): string {
   return COMPILED
     ? `${dirname(process.execPath)}/poe-deck.conf.example`
@@ -70,7 +70,7 @@ function exampleConfig (): string {
 
 const APPLY_TEMPLATE = 'Game Mode: Path of Exile → gear → Controller Settings → Browse Layouts → Templates → poe-deck → Apply'
 
-/** Аккорды, которые раскладка обязана слать: те же умолчания, что у демона. */
+/** Chords that the layout must send: the same defaults as in the daemon. */
 export function wantedChords (env = process.env): Array<{ chord: string, what: string }> {
   return [
     { chord: env.POE_DECK_KEYS ?? 'Control_L+Alt_L+C', what: 'price check' },
@@ -78,7 +78,7 @@ export function wantedChords (env = process.env): Array<{ chord: string, what: s
   ]
 }
 
-// ── звенья ───────────────────────────────────────────────────────────────────
+// ── links ──────────────────────────────────────────────────────────────────────
 
 function checkConfig (): { check: Check, league?: string } {
   const config = loadConfig()
@@ -125,8 +125,8 @@ async function checkProtocol (): Promise<Check> {
       fix: 'run doctor while the Deck is in Game Mode — the daemon only works there'
     }
   }
-  // Подсказка зонда «полный вывод выше» doctor не годится: вывода он не печатает.
-  // Код 127 — загрузчик не нашёл библиотеку: причина в звене binaries ниже, а не в протоколе.
+  // The probe hint "full output above" does not fit doctor: doctor does not print that output.
+  // Code 127 means the loader did not find a library: the cause is in the binaries link below, not in the protocol.
   const fix = /returned 127\b/.test(verdict.message)
     ? 'the probe cannot start — see the binaries line below'
     : verdict.kind === 'unclear' && verdict.hint.startsWith('full probe output')
@@ -136,9 +136,9 @@ async function checkProtocol (): Promise<Check> {
 }
 
 /**
- * Что `ldd` не нашёл у бинаря. `null` — `ldd` нет вовсе, проверить нечем.
- * Отказ самого `ldd` («not a dynamic executable» у битого файла или чужой
- * архитектуры) — тоже беда: такой бинарь не запустится, хоть «not found» и нет.
+ * What `ldd` did not find for a binary. `null` means there is no `ldd`, nothing to check with.
+ * A failure of `ldd` itself ("not a dynamic executable" for a broken file or another
+ * architecture) is also a problem: such a binary will not start, even without "not found".
  */
 function unresolvedLibs (path: string): string[] | null {
   if (!Bun.which('ldd')) return null
@@ -159,7 +159,7 @@ export function checkBinaries (): Check {
     ['gs-clip', process.env.POE_DECK_CLIP]
   ]
   const paths = tools.map(([name, override]) => toolPath(name, override))
-  // Собранный демон — такой же ELF: libc ему тоже нужна со стокового rootfs.
+  // The built daemon is also an ELF: it also needs libc from the stock rootfs.
   if (COMPILED) paths.unshift(process.execPath)
 
   const problems: string[] = []
@@ -179,7 +179,7 @@ export function checkBinaries (): Check {
   const missing = missingTools(cmd => Bun.which(cmd) !== null, true)
   if (missing.length) problems.push(`system commands missing: ${missing.join(', ')}`)
 
-  // Без ldd «все библиотеки на месте» не доказано: ✓ здесь был бы ложным.
+  // Without ldd, "all libraries present" is not proven: a ✓ here would be false.
   if (lddMissing) problems.push('ldd not found — libraries not checked')
 
   if (problems.length) {
@@ -222,13 +222,13 @@ function checkLayoutLink (appId: number): Check {
   const verdicts = configs.map(path => checkLayout(path, wanted.map(w => w.chord)))
   const good = verdicts.find(verdict => !verdict.missing.length)
   if (good) {
-    // Кнопку называем: «аккорд привязан» без кнопки не отличал L5 шаблона от L3
-    // в забытом файле, который Steam не применяет.
+    // We name the button: "chord bound" without a button did not tell L5 of the template
+    // from L3 in a forgotten file that Steam does not apply.
     const on = wanted.map(w => `${w.what} on ${good.buttons[w.chord]!.join('/')}`).join(', ')
     const unused = stale.length ? `; not applied by Steam: ${stale.map(shortPath).join(', ')}` : ''
     return { name: 'layout', ok: true, detail: `${on} (${shortPath(good.path)})${unused}` }
   }
-  // Аккаунтов на Deck бывает несколько — говорим про тот, где недостаёт меньше.
+  // A Deck can have several accounts: we report the one with the fewest missing chords.
   const best = verdicts.sort((a, b) => a.missing.length - b.missing.length)[0]!
   const what = best.missing.map(chord => `${wanted.find(w => w.chord === chord)?.what} (${chord})`)
   return {
@@ -242,8 +242,8 @@ function checkLayoutLink (appId: number): Check {
 const CHECK_WIFI = 'check Wi-Fi (Steam button → Settings → Internet), then run doctor again'
 
 /**
- * Ответ сети: живой ли хост и что он сказал. Любой HTTP-ответ — сеть есть.
- * Слова свои, а не кадра панели: у кадра совет «нажми снова», а здесь жать нечего.
+ * Network answer: is the host alive and what did it say. Any HTTP answer means the network works.
+ * The words are our own, not the panel frame: the frame says "press again", here there is nothing to press.
  */
 async function reach (url: string): Promise<{ ok: true, response: Response } | { ok: false, why: string, fix: string }> {
   try {
@@ -267,14 +267,14 @@ async function checkNetwork (): Promise<{ check: Check, tradeLeagues?: Array<{ i
     problems.push(`pathofexile.com — ${trade.why}`)
     fix = trade.fix
   } else if (!trade.response.ok) {
-    // Хост ответил — значит Wi-Fi жив; беда на стороне GGG, и совет другой.
+    // The host answered, so Wi-Fi works; the problem is on the GGG side, and the fix is different.
     const failure = explainFailure(trade.response.status === 503
       ? new MaintenanceError(503)
       : new TradeHttpError(trade.response.status))
     problems.push(`pathofexile.com — ${failure.title}: ${failure.detail}`)
     fix = failure.todo
   } else {
-    // 200 с HTML — портал Wi-Fi или прокси подменили ответ: это сеть, а не баг.
+    // 200 with HTML means a Wi-Fi portal or a proxy replaced the answer: this is the network, not a bug.
     tradeLeagues = await trade.response.json()
       .then(data => (data as { result?: Array<{ id: string, realm?: string }> }).result)
       .catch(() => undefined)
@@ -302,9 +302,9 @@ async function checkLeague (configured: string | undefined, tradeLeagues: Array<
 
   if (configured) {
     if (pc.includes(configured)) return { name: 'league', ok: true, detail: `${configured} (set by hand)`, league: configured }
-    // Приватной лиги в публичном списке нет: её видно только с cookie сессии.
-    // Проверяем тем же поиском, что делает прайс-чек, — иначе любая опечатка
-    // при заданной переменной прошла бы за приватную лигу.
+    // A private league is not in the public list: only the session cookie shows it.
+    // We check with the same search that the price check does; otherwise any typo
+    // with the variable set would pass as a private league.
     if (process.env.POE_DECK_POESESSID) {
       const check = await checkPrivateLeague(configured)
       return check.ok ? { ...check, league: configured } : check
@@ -331,13 +331,13 @@ async function checkLeague (configured: string | undefined, tradeLeagues: Array<
   }
 }
 
-/** Самый широкий поиск: проверяем лигу, а не предмет. */
+/** The widest search: we check the league, not an item. */
 const PROBE_QUERY = { query: { status: { option: 'any' } }, sort: { price: 'asc' } }
 
 /**
- * Приватная лига: один поиск с cookie сессии. Ответил — лига есть и cookie её
- * видит. Отказ трейда по лиге — опечатка или протухшая cookie, сказать, какое
- * из двух, трейд не даёт. Любая другая беда — звено не проверено, а не ✓.
+ * Private league: one search with the session cookie. An answer means the league exists
+ * and the cookie sees it. A trade refusal for the league is a typo or a stale cookie; trade
+ * does not tell which of the two. Any other problem means the link is not checked, not ✓.
  */
 export async function checkPrivateLeague (league: string): Promise<Check> {
   try {
@@ -363,10 +363,10 @@ export async function checkPrivateLeague (league: string): Promise<Check> {
 }
 
 /**
- * Курс Faustus: сводка Currency Exchange с poe.ninja по лиге прайс-чека. Пустая
- * сводка — лига, которой poe.ninja не ведёт (приватная, только что начавшаяся):
- * цена трейда при этом работает, второй строки на панели не будет, и чинить тут
- * нечего — поэтому ✓ со словами, а не ✗.
+ * Faustus rates: the Currency Exchange overview from poe.ninja for the price check league.
+ * An empty overview is a league that poe.ninja does not track (private, just started):
+ * the trade price still works, the panel has no second line, and there is nothing
+ * to fix, so it is ✓ with words, not ✗.
  */
 export async function checkExchangeRates (league: string | undefined): Promise<Check> {
   const name = 'faustus'
@@ -394,14 +394,14 @@ export async function checkExchangeRates (league: string | undefined): Promise<C
   }
 }
 
-// ── прогон ───────────────────────────────────────────────────────────────────
+// ── run ──────────────────────────────────────────────────────────────────────
 
-/** Все звенья по порядку. Печатает по мере проверки: сеть может думать секунды. */
+/** All links in order. Prints as it checks: the network can take seconds. */
 export async function doctor (build: string, print = (line: string) => console.log(line)): Promise<number> {
   const version = (process.env.POE_DECK_GAME ?? 'poe1') as GameVersion
   print(`poe-deck doctor — ${build}, ${version}`)
-  // И это словами: игра, которой нет в таблице, или нечитаемый файл сессии не
-  // должны превращать doctor в стектрейс.
+  // This too in words: a game that is not in the table, or an unreadable session file,
+  // must not turn doctor into a stack trace.
   let appId: number
   try {
     appId = gameFeatures(version).steamAppId
@@ -413,8 +413,8 @@ export async function doctor (build: string, print = (line: string) => console.l
 
   const checks: Check[] = []
   const add = (check: Check): void => { checks.push(check); formatCheck(check).forEach(line => print(line)) }
-  // Звено, которое само упало, — тоже ✗ словами: doctor не имеет права ответить
-  // игроку стектрейсом, даже если сломался он сам.
+  // A link that crashed itself is also ✗ in words: doctor must not answer
+  // the player with a stack trace, even if doctor itself broke.
   const run = async <T extends { check: Check }>(name: string, body: () => T | Promise<T>): Promise<Partial<T>> => {
     try {
       const done = await body()

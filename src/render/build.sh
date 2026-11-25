@@ -1,34 +1,34 @@
 #!/bin/sh
-# Один рецепт сборки gs-panel на все контуры: check.sh на mini и Jenkins на Deck.
-# Разъехаться этим двум нельзя — иначе прогон на железе проверяет не тот бинарь,
-# что прошёл проверку (грабля прогона #33 в спайке по хоткею).
+# One build recipe for gs-panel on every path: check.sh on mini and Jenkins on the Deck.
+# The two must not drift apart. Otherwise the hardware run tests a different binary
+# than the one that passed the check (the pitfall of run #33 in the hotkey spike).
 #
-#   ./build.sh [каталог назначения]     по умолчанию — рядом с исходником
+#   ./build.sh [target directory]     default: next to the source
 set -eu
 
 out="${1:-$(dirname "$0")}"
 src="$(dirname "$0")/gs-panel.c"
 
-# pkg-config, а не голые -l: Xft тянет за собой freetype и fontconfig, и пути к их
-# заголовкам различаются между Debian (check.sh) и Arch (контейнер на Deck).
+# pkg-config, not bare -l: Xft pulls in freetype and fontconfig, and the paths to
+# their headers differ between Debian (check.sh) and Arch (the container on the Deck).
 cflags=$(pkg-config --cflags xft x11)
 libs=$(pkg-config --libs xft x11 fontconfig)
 
 # shellcheck disable=SC2086
 gcc -O2 -Wall -Wextra -Werror -o "$out/gs-panel" "$src" $cflags $libs
-echo "✓  собран $out/gs-panel"
+echo "✓  built $out/gs-panel"
 
-# Читалка указателя ставится тем же рецептом — иначе на Deck приедет рендерер
-# без неё, и редактор окажется без ввода. Xft ей не нужен: только X11.
+# The pointer reader uses the same recipe. Otherwise the Deck gets a renderer
+# without it, and the editor has no input. It does not need Xft: only X11.
 # shellcheck disable=SC2086
 gcc -O2 -Wall -Wextra -Werror -o "$out/gs-pointer" "$(dirname "$0")/gs-pointer.c" \
   $(pkg-config --cflags x11) $(pkg-config --libs x11)
-echo "✓  собран $out/gs-pointer"
+echo "✓  built $out/gs-pointer"
 
-# Читалка буфера — вместо xclip из distrobox. Тот же рецепт по той
-# же причине: бинари рантайма собираются одним скриптом, и в наборе для игрока
-# не может оказаться рендерера без читалки. Только X11, как у gs-pointer.
+# The clipboard reader replaces xclip from distrobox. Same recipe for the same
+# reason: one script builds the runtime binaries, so the player set can never
+# hold a renderer without the reader. Only X11, as for gs-pointer.
 # shellcheck disable=SC2086
 gcc -O2 -Wall -Wextra -Werror -o "$out/gs-clip" "$(dirname "$0")/gs-clip.c" \
   $(pkg-config --cflags x11) $(pkg-config --libs x11)
-echo "✓  собран $out/gs-clip"
+echo "✓  built $out/gs-clip"

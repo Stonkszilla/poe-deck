@@ -1,49 +1,50 @@
 /*
- * gs-hotkey-probe — зонд глобального хоткея gamescope.
+ * gs-hotkey-probe — probe for the gamescope global hotkey.
  *
- * Отвечает на главный риск эпика ввода: может ли ОБЫЧНЫЙ сторонний
- * Wayland-клиент забиндить `gamescope_action_binding` — или протокол на деле
- * доступен только Steam. Bash туда не достаёт: нужен настоящий клиент.
+ * It answers the main risk of the input epic: can a REGULAR third-party
+ * Wayland client bind `gamescope_action_binding`, or is the protocol in fact
+ * available only to Steam. Bash cannot reach it: a real client is necessary.
  *
- * Режимы:
+ * Modes:
  *
- *   --dump      Подключиться, выписать все глобалы сокета и выйти. Ничего не
- *               биндит и не вооружает — безопасно гонять в живой сессии с игрой.
- *               Код 0 ⟺ gamescope_action_binding_manager в списке есть.
- *   (по умолч.) Забиндить менеджер, создать привязку, зарегистрировать аккорды,
- *               вооружить и слушать `triggered` заданное число секунд, печатая
- *               каждое срабатывание с меткой времени.
+ *   --dump      Connect, list all globals of the socket and exit. Binds and
+ *               arms nothing, so it is safe to run in a live session with the game.
+ *               Exit code 0 <=> gamescope_action_binding_manager is in the list.
+ *   (default)   Bind the manager, create a binding, register the chords,
+ *               arm it and listen for `triggered` for the given number of seconds,
+ *               printing each trigger with a timestamp.
  *
- * Что зонд НЕ делает и делать не может: сказать, дошла ли клавиша до игры.
- * Это видно только в самой PoE, глазами оператора. Зонд отвечает за свою
- * половину — «слышим ли мы», — и печатает, чего ждать от второй.
+ * What the probe does NOT do and cannot do: tell if the key reached the game.
+ * Only the operator can see that, in PoE itself. The probe answers for its own
+ * half ("do we hear it") and prints what to expect from the other half.
  *
- * Две вещи из исходников gamescope, без которых прогон читается неверно:
+ * Two facts from the gamescope sources, without which a run reads wrong:
  *
- * 1. СРАВНЕНИЕ НАБОРОВ ТОЧНОЕ, И ПРОВЕРЯЕТСЯ ОНО НА КАЖДОМ НАЖАТИИ. Хоткей
- *    срабатывает при `setPressedKeySyms != keybind.setKeySyms` → continue
- *    (wlserver.cpp:2501, master): нажатых keysym должно быть ровно столько же
- *    и тех же, лишний зажатый Shift ломает совпадение, а привязка на {D} не
- *    сработает от Ctrl+D. Обратная сторона — промежуточные состояния тоже
- *    сравниваются, поэтому набор маркера не должен возникать по дороге к
- *    другому посылаемому аккорду.
+ * 1. THE SET COMPARISON IS EXACT, AND IT RUNS ON EVERY KEY EVENT. The hotkey
+ *    fires unless `setPressedKeySyms != keybind.setKeySyms` -> continue
+ *    (wlserver.cpp:2501, master): the pressed keysyms must be exactly the
+ *    same set, one extra held Shift breaks the match, and a binding on {D}
+ *    does not fire on Ctrl+D. The other side: intermediate states are also
+ *    compared, so the marker set must not occur on the way to another chord
+ *    that we send.
  *
- *    Отсюда умолчание: ДВА аккорда, Ctrl+D левым и правым Control — какой из
- *    них пришлёт Steam Input, заранее неизвестно. Регистрировать несколько
- *    триггеров на одну привязку штатно: `add_keyboard_trigger` копит их
- *    в вектор.
+ *    Hence the default: TWO chords, Ctrl+D with the left and the right Control.
+ *    We do not know in advance which one Steam Input sends. Many triggers on
+ *    one binding are a supported case: `add_keyboard_trigger` collects them
+ *    in a vector.
  *
- * 2. ФЛАГ БЛОКИРОВКИ НЕ ЗНАЧИТ ТОГО, ЧТО НАПИСАНО В ПРОТОКОЛЕ, и до
- *    gamescope 3.16.12 не значил вообще ничего. Подробности — в README
- *    (§ «Блокировка: три версии правды»); зонд печатает ожидание сам, чтобы
- *    оператор знал, что смотреть в игре.
+ * 2. THE BLOCK FLAG DOES NOT MEAN WHAT THE PROTOCOL SAYS, and before
+ *    gamescope 3.16.12 it meant nothing at all. Details are in the README
+ *    (§ "Blocking: three versions of the truth"); the probe prints the
+ *    expectation itself, so the operator knows what to look for in the game.
  *
- * Почему C, а не TypeScript (стек проекта): протокол приватный и wayland-only,
- * биндинга libwayland для bun в поставке SteamOS нет, а маршалинг генерируется
- * из XML одной командой wayland-scanner. Это инструмент спайка, не код приложения.
+ * Why C and not TypeScript (the project stack): the protocol is private and
+ * wayland-only, SteamOS ships no libwayland binding for bun, and wayland-scanner
+ * generates the marshalling from the XML in one command. This is a spike tool,
+ * not application code.
  *
- * Сборка — ./build.sh (на Deck внутри distrobox: в системе нет ни компилятора,
- * ни заголовков). Проверка без Deck — ./check.sh, поднимает мок компоновщика.
+ * Build: ./build.sh (on the Deck inside distrobox: the system has no compiler
+ * and no headers). Check without a Deck: ./check.sh, it starts a compositor mock.
  */
 
 #include "gamescope-action-binding-client-protocol.h"
@@ -58,8 +59,9 @@
 #include <time.h>
 #include <wayland-client.h>
 
-/* Как часто печатать строку состояния, секунд. Ровно как у gs-overlay-probe:
- * лог минутного прогона остаётся читаемым, а «зонд жив» видно без экрана. */
+/* How often to print the status line, in seconds. The same as gs-overlay-probe:
+ * the log of a one-minute run stays readable, and "probe is alive" is visible
+ * without a screen. */
 #define TICK_SECONDS 2
 
 #define MAX_CHORDS 8
@@ -68,11 +70,11 @@
 struct chord {
 	uint32_t keysym[MAX_KEYS_PER_CHORD];
 	int count;
-	char name[128];      /* как аккорд выглядит в логе */
-	unsigned triggers;   /* сколько раз сработал именно он */
+	char name[128];      /* how the chord looks in the log */
+	unsigned triggers;   /* how many times this chord fired */
 };
 
-/* Порядок аргументов события `triggered`, распознанный на лету — см. on_triggered. */
+/* Argument order of the `triggered` event, detected on the fly (see on_triggered). */
 enum arg_order { ORDER_UNSET = -1, ORDER_UNKNOWN, ORDER_XML, ORDER_SWAPPED };
 
 struct state {
@@ -85,9 +87,9 @@ struct state {
 	enum arg_order order;
 };
 
-/* Имена keysym, которых хватает для этого спайка. Полная таблица живёт в
- * libxkbcommon, но тащить рантайм-зависимость ради десятка имён не стоит:
- * всё, чего нет в таблице, пишется шестнадцатеричным кодом (0xffca). */
+/* Keysym names that are enough for this spike. The full table lives in
+ * libxkbcommon, but a runtime dependency for ten names is not worth it:
+ * anything not in the table is written as a hex code (0xffca). */
 static const struct {
 	const char *name;
 	uint32_t sym;
@@ -100,8 +102,8 @@ static const struct {
 	{ "F17", 0xffce }, { "F18", 0xffcf }, { "F19", 0xffd0 }, { "F20", 0xffd1 },
 };
 
-/* Обратное к keysym_parse. Буфер отдаётся вызывающему, потому что печатаемый
- * ASCII имени в таблице не имеет — «D» иначе печаталась бы как 0x44. */
+/* The inverse of keysym_parse. The caller gives the buffer, because printable
+ * ASCII has no name in the table; otherwise "D" would print as 0x44. */
 static const char *keysym_name(uint32_t sym, char *buf, size_t size)
 {
 	for (size_t i = 0; i < sizeof(k_keysyms) / sizeof(k_keysyms[0]); i++)
@@ -126,9 +128,9 @@ static bool keysym_parse(const char *name, uint32_t *out)
 		}
 	}
 
-	/* Одиночный печатаемый ASCII — сам себе keysym (латиница-1 совпадает с ASCII).
-	 * gamescope всё равно нормализует регистр через xkb_keysym_to_upper, так что
-	 * «d» и «D» дадут один и тот же триггер. */
+	/* A single printable ASCII character is its own keysym (Latin-1 matches ASCII).
+	 * gamescope normalizes the case with xkb_keysym_to_upper anyway, so
+	 * "d" and "D" give the same trigger. */
 	if (name[0] && !name[1] && name[0] > 0x20 && name[0] < 0x7f) {
 		*out = (uint32_t)(unsigned char)name[0];
 		return true;
@@ -143,12 +145,12 @@ static bool keysym_parse(const char *name, uint32_t *out)
 	return false;
 }
 
-/* "Control_L+Alt_L+F13" → набор keysym. Возврат false = имя не разобрано. */
+/* "Control_L+Alt_L+F13" -> set of keysyms. Returns false if a name does not parse. */
 static bool chord_parse(const char *spec, struct chord *out)
 {
 	char buf[256];
 	if (strlen(spec) >= sizeof(buf)) {
-		fprintf(stderr, "✗  аккорд длиннее %zu символов: %s\n", sizeof(buf) - 1, spec);
+		fprintf(stderr, "✗  chord is longer than %zu characters: %s\n", sizeof(buf) - 1, spec);
 		return false;
 	}
 	strcpy(buf, spec);
@@ -156,11 +158,11 @@ static bool chord_parse(const char *spec, struct chord *out)
 	out->count = 0;
 	for (char *tok = strtok(buf, "+"); tok; tok = strtok(NULL, "+")) {
 		if (out->count == MAX_KEYS_PER_CHORD) {
-			fprintf(stderr, "✗  больше %d клавиш в аккорде: %s\n", MAX_KEYS_PER_CHORD, spec);
+			fprintf(stderr, "✗  more than %d keys in a chord: %s\n", MAX_KEYS_PER_CHORD, spec);
 			return false;
 		}
 		if (!keysym_parse(tok, &out->keysym[out->count])) {
-			fprintf(stderr, "✗  не знаю клавишу «%s» — пиши кодом, например 0xffca\n", tok);
+			fprintf(stderr, "✗  unknown key \"%s\" — write it as a code, for example 0xffca\n", tok);
 			return false;
 		}
 		out->count++;
@@ -168,9 +170,9 @@ static bool chord_parse(const char *spec, struct chord *out)
 	return out->count > 0;
 }
 
-/* Человекочитаемое имя аккорда. Уезжает и в лог зонда, и в set_description —
- * gamescope пишет описание в свой журнал, так что «наш ли это триггер сработал»
- * можно свериться и с его стороны (journalctl -b | grep -i binding). */
+/* Human-readable chord name. It goes to the probe log and to set_description.
+ * gamescope writes the description to its own journal, so "did our trigger fire"
+ * can also be checked from its side (journalctl -b | grep -i binding). */
 static void chord_name(struct chord *c)
 {
 	size_t used = 0;
@@ -195,7 +197,7 @@ static uint64_t now_nanos(void)
 	return (uint64_t)ts.tv_sec * 1000000000ull + (uint64_t)ts.tv_nsec;
 }
 
-/* ── события ─────────────────────────────────────────────────────────────── */
+/* ── events ──────────────────────────────────────────────────────────────── */
 
 static void on_global(void *data, struct wl_registry *registry, uint32_t name,
                       const char *interface, uint32_t version)
@@ -205,7 +207,7 @@ static void on_global(void *data, struct wl_registry *registry, uint32_t name,
 
 	bool ours = strcmp(interface, gamescope_action_binding_manager_interface.name) == 0;
 	if (st->dump)
-		printf("  %-52s v%-2u%s\n", interface, version, ours ? "  ← нужный нам" : "");
+		printf("  %-52s v%-2u%s\n", interface, version, ours ? "  ← the one we need" : "");
 
 	if (!ours)
 		return;
@@ -227,7 +229,7 @@ static void on_global_remove(void *data, struct wl_registry *registry, uint32_t 
 	struct state *st = data;
 	(void)registry;
 	if (name == st->manager_name && st->manager)
-		printf("⚠  менеджер хоткеев исчез из реестра — gamescope его отозвал\n");
+		printf("⚠  hotkey manager left the registry — gamescope revoked it\n");
 }
 
 static const struct wl_registry_listener k_registry_listener = {
@@ -235,23 +237,24 @@ static const struct wl_registry_listener k_registry_listener = {
 	.global_remove = on_global_remove,
 };
 
-/* Аргументы приходят под именами из XML, но верить именам нельзя: gamescope
- * ≤3.16.24 шлёт их в другом порядке, чем объявляет его же XML того же тега —
+/* The arguments arrive under the names from the XML, but the names cannot be
+ * trusted: gamescope ≤3.16.24 sends them in a different order than its own XML
+ * of the same tag declares:
  *
  *   XML  :  sequence, time_lo, time_hi, trigger_flags
  *   ≤3.16.24: sequence, trigger_flags, time_lo, time_hi   (src/WaylandServer/
- *             GamescopeActionBinding.h, вызов send_triggered; починено в 3.16.25)
+ *             GamescopeActionBinding.h, the send_triggered call; fixed in 3.16.25)
  *
- * На Deck стоит 3.16.23.4, то есть версия с расхождением: читая по XML, мы
- * получали время в 424 года и флаги 0x159b. Различаем не по версии — её из
- * протокола не спросить, — а по самому времени: у нас есть свой CLOCK_MONOTONIC
- * как эталон, и правдоподобен ровно один из двух разборов.
+ * The Deck has 3.16.23.4, a version with the mismatch: reading by the XML, we
+ * got a time of 424 years and flags 0x159b. We do not tell them apart by version
+ * (the protocol cannot report it), but by the time itself: our own CLOCK_MONOTONIC
+ * is the reference, and exactly one of the two layouts is plausible.
  */
-/* Контекст листенера: событие `triggered` НЕ говорит, какой из триггеров
- * совпал — в нём только sequence, время и флаги. Поэтому на каждый аккорд
- * заводится своя привязка со своим листенером, и «какой именно сработал»
- * читается по объекту. Без этого прогон #37 дал 62 события, про которые нельзя
- * было сказать, был ли среди них хоть один Ctrl+D. */
+/* Listener context: the `triggered` event does NOT tell which trigger matched;
+ * it carries only sequence, time and flags. So each chord gets its own binding
+ * with its own listener, and "which one fired" is read from the object.
+ * Without this, run #37 gave 62 events, and nobody could say if even one of
+ * them was Ctrl+D. */
 struct binding_ctx {
 	struct state *st;
 	struct chord *chord;
@@ -269,10 +272,10 @@ static void on_triggered(void *data, struct gamescope_action_binding *binding,
 	uint64_t as_xml = ((uint64_t)time_hi << 32) | (uint64_t)time_lo;
 	uint64_t as_swapped = ((uint64_t)trigger_flags << 32) | (uint64_t)time_hi;
 
-	/* Событию меньше минуты от роду по построению: мы его только что получили.
-	 * Секунда допуска вперёд — на случай, если метка окажется чуть впереди
-	 * нашего clock_gettime: различить надо правдоподобное от 424 лет, а не
-	 * ловить наносекунды. */
+	/* By construction the event is less than a minute old: we just received it.
+	 * One second of tolerance forward covers a timestamp slightly ahead of
+	 * our clock_gettime: the goal is to tell a plausible value from 424 years,
+	 * not to catch nanoseconds. */
 	bool xml_ok = as_xml < now + 1000000000ull && now < as_xml + 60000000000ull;
 	bool swapped_ok = as_swapped < now + 1000000000ull && now < as_swapped + 60000000000ull;
 
@@ -290,23 +293,23 @@ static void on_triggered(void *data, struct gamescope_action_binding *binding,
 
 	if (order != st->order) {
 		st->order = order;
-		printf("  порядок аргументов triggered: %s\n",
-		       order == ORDER_XML ? "как в XML (gamescope ≥3.16.25)"
-		     : order == ORDER_SWAPPED ? "как в gamescope ≤3.16.24 — флаги и время переставлены"
-		     : "НЕ РАСПОЗНАН, время ниже читать нельзя");
+		printf("  triggered argument order: %s\n",
+		       order == ORDER_XML ? "as in XML (gamescope ≥3.16.25)"
+		     : order == ORDER_SWAPPED ? "as in gamescope ≤3.16.24 — flags and time are swapped"
+		     : "NOT RECOGNIZED, the time below is unreadable");
 	}
 
 	char lag[80];
 	if (order == ORDER_UNKNOWN)
-		snprintf(lag, sizeof(lag), "⚠ сырые аргументы 0x%x 0x%x 0x%x",
+		snprintf(lag, sizeof(lag), "⚠ raw arguments 0x%x 0x%x 0x%x",
 		         time_lo, time_hi, trigger_flags);
 	else
-		snprintf(lag, sizeof(lag), "до нас доехало за %.2f мс",
+		snprintf(lag, sizeof(lag), "reached us in %.2f ms",
 		         (double)(now - event_ns) / 1e6);
 
 	st->triggers++;
 	ctx->chord->triggers++;
-	printf("  ★ [%s] #%u  seq=%u  t=%.6f с CLOCK_MONOTONIC  %s  flags=0x%x%s\n",
+	printf("  ★ [%s] #%u  seq=%u  t=%.6f s CLOCK_MONOTONIC  %s  flags=0x%x%s\n",
 	       ctx->chord->name, st->triggers, sequence, (double)event_ns / 1e9, lag, flags,
 	       (flags & GAMESCOPE_ACTION_BINDING_TRIGGER_FLAG_KEYBOARD) ? " (keyboard)" : "");
 	fflush(stdout);
@@ -316,10 +319,10 @@ static const struct gamescope_action_binding_listener k_binding_listener = {
 	.triggered = on_triggered,
 };
 
-/* ── цикл ────────────────────────────────────────────────────────────────── */
+/* ── loop ────────────────────────────────────────────────────────────────── */
 
-/* Один проход: дождаться событий или таймаута. Возврат false = соединение
- * порвалось (gamescope ушёл), и это отдельный от «нажатий не было» исход. */
+/* One pass: wait for events or a timeout. Returns false if the connection
+ * broke (gamescope is gone); this outcome is separate from "no presses". */
 static bool pump(struct wl_display *display, int timeout_ms)
 {
 	while (wl_display_prepare_read(display) != 0) {
@@ -349,16 +352,16 @@ static bool pump(struct wl_display *display, int timeout_ms)
 static void usage(void)
 {
 	fprintf(stderr,
-	    "gs-hotkey-probe [--dump] [--seconds N] [--no-block] [--display СОКЕТ]\n"
+	    "gs-hotkey-probe [--dump] [--seconds N] [--no-block] [--display SOCKET]\n"
 	    "                [--keys Control_L+Alt_L+F13]…\n"
 	    "\n"
-	    "  --dump      выписать глобалы сокета и выйти; код 0 = менеджер хоткеев есть\n"
-	    "  --seconds   сколько слушать, по умолчанию 60\n"
-	    "  --no-block  выставить бит no_block протокола (см. README, § блокировка)\n"
-	    "  --keys      аккорд, можно повторять; по умолчанию Ctrl+D левым\n"
-	    "              и правым Control\n"
-	    "  --display   имя сокета; по умолчанию GAMESCOPE_WAYLAND_DISPLAY,\n"
-	    "              затем WAYLAND_DISPLAY, затем gamescope-0\n");
+	    "  --dump      list the globals of the socket and exit; code 0 = hotkey manager present\n"
+	    "  --seconds   how long to listen, default 60\n"
+	    "  --no-block  set the no_block bit of the protocol (see README, § blocking)\n"
+	    "  --keys      chord, repeatable; default is Ctrl+D with the left\n"
+	    "              and the right Control\n"
+	    "  --display   socket name; default is GAMESCOPE_WAYLAND_DISPLAY,\n"
+	    "              then WAYLAND_DISPLAY, then gamescope-0\n");
 }
 
 int main(int argc, char **argv)
@@ -367,8 +370,8 @@ int main(int argc, char **argv)
 	int seconds = 60;
 	uint32_t arm_flags = 0;
 	const char *socket_name = NULL;
-	/* Обнуляем: счётчик срабатываний и имя аккорда живут прямо здесь, а
-	 * chord_parse их не трогает. Мусор в них уехал бы в итоговую разбивку. */
+	/* Zero it: the trigger counter and the chord name live right here, and
+	 * chord_parse does not touch them. Garbage in them would go to the final breakdown. */
 	struct chord chords[MAX_CHORDS] = { 0 };
 	int chord_count = 0;
 
@@ -383,7 +386,7 @@ int main(int argc, char **argv)
 			socket_name = argv[++i];
 		} else if (strcmp(argv[i], "--keys") == 0 && i + 1 < argc) {
 			if (chord_count == MAX_CHORDS) {
-				fprintf(stderr, "✗  больше %d аккордов не поддерживается\n", MAX_CHORDS);
+				fprintf(stderr, "✗  more than %d chords is not supported\n", MAX_CHORDS);
 				return 2;
 			}
 			if (!chord_parse(argv[++i], &chords[chord_count]))
@@ -395,19 +398,19 @@ int main(int argc, char **argv)
 		}
 	}
 
-	/* Умолчание: все четыре сочетания левых и правых модификаторов. Какой из них
-	 * пришлёт Steam Input, до прогона на железе неизвестно, а сравнение точное.
+	/* Default: the left and the right modifier variants. Which one Steam Input
+	 * sends is unknown until a run on the hardware, and the comparison is exact.
 	 *
-	 * Клавиша — «D», а не «F13», как предлагала разведка ввода: F13–F24 Steam
-	 * Input отправлять НЕ УМЕЕТ (конфигуратор их не показывает — проверено по
-	 * обсуждениям Valve, README § «Чем жать»).
+	 * The key is "D", not "F13" as the input recon suggested: Steam Input CANNOT
+	 * send F13-F24 (the configurator does not show them; checked against
+	 * Valve discussions, README § "What to press").
 	 *
-	 * Аккорд — Ctrl+D, две клавиши, а не три. Число клавиш роли не играет: важно,
-	 * чтобы набор маркера не возникал по дороге к другому посылаемому аккорду, и
-	 * {Ctrl,D} этому удовлетворяет — «D» не входит в Ctrl+Alt+C, который уходит
-	 * в игру. Ровно эту пару можно назначить на два задних курка Deck и нажать
-	 * руками уже сегодня; Ctrl+D же использует awakened-poe-trade.
-	 * Занимает ли «D» сама PoE — отдельный вопрос, его закрывает MODE=GAMEKEY. */
+	 * The chord is Ctrl+D, two keys and not three. The key count does not matter:
+	 * the marker set must not occur on the way to another chord that we send, and
+	 * {Ctrl,D} satisfies this: "D" is not in Ctrl+Alt+C, which goes to the game.
+	 * This exact pair can go on two back buttons of the Deck and be pressed
+	 * by hand today; awakened-poe-trade also uses Ctrl+D.
+	 * Whether PoE itself uses "D" is a separate question; MODE=GAMEKEY closes it. */
 	if (chord_count == 0) {
 		static const char *k_default[] = { "Control_L+D", "Control_R+D" };
 		for (size_t i = 0; i < sizeof(k_default) / sizeof(k_default[0]); i++)
@@ -422,49 +425,49 @@ int main(int argc, char **argv)
 	if (!socket_name)
 		socket_name = "gamescope-0";
 
-	printf("сокет: %s (XDG_RUNTIME_DIR=%s)\n", socket_name,
-	       getenv("XDG_RUNTIME_DIR") ? getenv("XDG_RUNTIME_DIR") : "не задан");
+	printf("socket: %s (XDG_RUNTIME_DIR=%s)\n", socket_name,
+	       getenv("XDG_RUNTIME_DIR") ? getenv("XDG_RUNTIME_DIR") : "not set");
 
 	struct wl_display *display = wl_display_connect(socket_name);
 	if (!display) {
-		printf("✗  не подключился к сокету %s: %s\n", socket_name, strerror(errno));
-		printf("   в Game Mode имя сокета лежит в /run/user/<uid>/gamescope-environment\n");
+		printf("✗  could not connect to socket %s: %s\n", socket_name, strerror(errno));
+		printf("   in Game Mode the socket name is in /run/user/<uid>/gamescope-environment\n");
 		return 1;
 	}
-	printf("✓  подключились к сокету обычным клиентом, без всяких прав\n");
+	printf("✓  connected to the socket as a regular client, with no special rights\n");
 
 	struct wl_registry *registry = wl_display_get_registry(display);
 	wl_registry_add_listener(registry, &k_registry_listener, &st);
 	if (wl_display_roundtrip(display) < 0) {
-		printf("✗  реестр не отдался: %s\n", strerror(errno));
+		printf("✗  registry did not arrive: %s\n", strerror(errno));
 		return 1;
 	}
 
 	if (st.dump) {
-		printf("\nвсего глобалов: %d\n", st.globals);
+		printf("\nglobals in total: %d\n", st.globals);
 		if (!st.manager_version) {
-			printf("✗  gamescope_action_binding_manager в реестре НЕТ — "
-			       "либо это не gamescope, либо протокол закрыт от нас\n");
+			printf("✗  gamescope_action_binding_manager is NOT in the registry — "
+			       "either this is not gamescope, or the protocol is closed to us\n");
 			return 1;
 		}
-		printf("✓  gamescope_action_binding_manager есть, версия %u — "
-		       "протокол доступен стороннему клиенту\n", st.manager_version);
+		printf("✓  gamescope_action_binding_manager present, version %u — "
+		       "the protocol is available to a third-party client\n", st.manager_version);
 		return 0;
 	}
 
 	if (!st.manager) {
-		printf("✗  gamescope_action_binding_manager в реестре НЕТ. Всего глобалов: %d.\n",
+		printf("✗  gamescope_action_binding_manager is NOT in the registry. Globals in total: %d.\n",
 		       st.globals);
-		printf("   ОТВЕТ СПАЙКА: НЕТ. Основной путь ввода отпадает, идти в запасные.\n");
+		printf("   SPIKE ANSWER: NO. The main input path is out, go to the fallbacks.\n");
 		return 1;
 	}
-	printf("✓  менеджер хоткеев забинден: версия глобала %u, взяли %u\n",
+	printf("✓  hotkey manager bound: global version %u, we took %u\n",
 	       st.manager_version, gamescope_action_binding_manager_interface.version);
 
-	/* ОДНА ПРИВЯЗКА НА АККОРД, а не один объект со списком триггеров.
-	 * Событие `triggered` не сообщает, какой из триггеров совпал, поэтому
-	 * различить их можно только по объекту-получателю. Менеджер создаёт
-	 * привязки без ограничения по числу. */
+	/* ONE BINDING PER CHORD, not one object with a list of triggers.
+	 * The `triggered` event does not tell which trigger matched, so the only
+	 * way to tell them apart is the receiving object. The manager creates
+	 * bindings with no limit on their number. */
 	struct gamescope_action_binding *bindings[MAX_CHORDS];
 	struct binding_ctx ctxs[MAX_CHORDS];
 
@@ -473,7 +476,7 @@ int main(int argc, char **argv)
 
 		bindings[i] = gamescope_action_binding_manager_create_action_binding(st.manager);
 		if (!bindings[i]) {
-			printf("✗  create_action_binding не отдал объект для аккорда %s\n",
+			printf("✗  create_action_binding returned no object for chord %s\n",
 			       chords[i].name);
 			return 1;
 		}
@@ -491,7 +494,7 @@ int main(int argc, char **argv)
 		for (int k = 0; k < chords[i].count; k++) {
 			uint32_t *slot = wl_array_add(&keysyms, sizeof(uint32_t));
 			if (!slot) {
-				printf("✗  не хватило памяти под массив keysym\n");
+				printf("✗  out of memory for the keysym array\n");
 				return 1;
 			}
 			*slot = chords[i].keysym[k];
@@ -500,27 +503,27 @@ int main(int argc, char **argv)
 		wl_array_release(&keysyms);
 
 		gamescope_action_binding_arm(bindings[i], arm_flags);
-		printf("  триггер %d: %s\n", i + 1, chords[i].name);
+		printf("  trigger %d: %s\n", i + 1, chords[i].name);
 	}
 
 	if (wl_display_roundtrip(display) < 0) {
-		printf("✗  сервер отверг привязку: %s\n", strerror(errno));
-		printf("   ОТВЕТ СПАЙКА: НЕТ, протокол закрыт для сторонних клиентов.\n");
+		printf("✗  server rejected the binding: %s\n", strerror(errno));
+		printf("   SPIKE ANSWER: NO, the protocol is closed to third-party clients.\n");
 		return 1;
 	}
-	printf("✓  привязка вооружена, arm_flags=0x%x (%s)\n", arm_flags,
+	printf("✓  binding armed, arm_flags=0x%x (%s)\n", arm_flags,
 	       (arm_flags & GAMESCOPE_ACTION_BINDING_ARM_FLAG_NO_BLOCK)
-	           ? "бит no_block ВЫСТАВЛЕН" : "бит no_block не выставлен");
+	           ? "no_block bit SET" : "no_block bit not set");
 
-	/* Единственное, чего зонд не измеряет сам, — дошла ли клавиша до игры.
-	 * Поэтому он называет, что смотреть, и почему ответ неочевиден. */
-	printf("\nЧТО СМОТРЕТЬ В ИГРЕ. Протокол обещает: без no_block клавиша\n"
-	       "перехватывается и до приложения не доходит. Исходники говорят иначе —\n"
-	       "с 3.16.12 блокирует как раз ВЫСТАВЛЕННЫЙ no_block, а до 3.16.12\n"
-	       "блокировки нет вовсе. Разбор — README, § «Блокировка: три версии правды».\n"
-	       "Прогнать надо оба раза и посмотреть, реагирует ли PoE на клавишу-маркер.\n");
+	/* The one thing the probe does not measure itself: did the key reach the game.
+	 * So it names what to look at, and why the answer is not obvious. */
+	printf("\nWHAT TO WATCH IN THE GAME. The protocol promises: without no_block the key\n"
+	       "is intercepted and does not reach the application. The sources say otherwise:\n"
+	       "since 3.16.12 it is a SET no_block that blocks, and before 3.16.12\n"
+	       "there is no blocking at all. Details: README, § \"Blocking: three versions of the truth\".\n"
+	       "Run it both ways and watch if PoE reacts to the marker key.\n");
 
-	printf("\nслушаю %d с. Жми назначенную кнопку — и в игре, и в QAM.\n", seconds);
+	printf("\nlistening for %d s. Press the assigned button, both in the game and in QAM.\n", seconds);
 	fflush(stdout);
 
 	uint64_t started = now_nanos();
@@ -542,7 +545,7 @@ int main(int argc, char **argv)
 
 		now = now_nanos();
 		if (now >= next_tick) {
-			printf("  [%3llu с] жив, срабатываний %u\n",
+			printf("  [%3llu s] alive, triggers %u\n",
 			       (unsigned long long)((now - started) / 1000000000ull), st.triggers);
 			fflush(stdout);
 			next_tick = now + (uint64_t)TICK_SECONDS * 1000000000ull;
@@ -551,8 +554,8 @@ int main(int argc, char **argv)
 
 	printf("\n");
 	if (!alive) {
-		printf("✗  соединение с gamescope порвалось до конца прогона "
-		       "(срабатываний собрано: %u)\n", st.triggers);
+		printf("✗  connection to gamescope broke before the end of the run "
+		       "(triggers collected: %u)\n", st.triggers);
 		wl_display_disconnect(display);
 		return 1;
 	}
@@ -565,29 +568,29 @@ int main(int argc, char **argv)
 	wl_display_disconnect(display);
 
 	if (st.triggers == 0) {
-		printf("ИТОГ: привязка ПРИНЯТА, но за %d с не сработала ни разу.\n", seconds);
-		printf("      аккорды, которые слушались:");
+		printf("RESULT: binding ACCEPTED, but it did not fire once in %d s.\n", seconds);
+		printf("      chords we listened for:");
 		for (int i = 0; i < chord_count; i++)
 			printf(" %s", chords[i].name);
 		printf("\n");
-		printf("      Это НЕ ответ «нет»: биндиться сторонний клиент смог.\n");
-		printf("      Дальше две развилки — либо клавиша не доехала до gamescope\n");
-		printf("      (проверять Steam Input), либо набор keysym не совпал точно\n");
-		printf("      (пробовать --keys с другими сочетаниями).\n");
+		printf("      This is NOT a \"no\": the third-party client could bind.\n");
+		printf("      Two branches from here: either the key did not reach gamescope\n");
+		printf("      (check Steam Input), or the keysym set did not match exactly\n");
+		printf("      (try --keys with other combinations).\n");
 		return 1;
 	}
 
-	printf("ИТОГ: ДА. Сторонний клиент биндит gamescope_action_binding и получает\n");
-	printf("      события — их %u за %d с. Осталось глазами подтвердить,\n",
+	printf("RESULT: YES. A third-party client binds gamescope_action_binding and receives\n");
+	printf("      events: %u of them in %d s. What remains is to confirm by eye\n",
 	       st.triggers, seconds);
-	printf("      дошла ли клавиша при этом до игры.\n\n");
+	printf("      if the key also reached the game.\n\n");
 
-	/* Разбивка по аккордам — то, ради чего заведена привязка на каждый.
-	 * «62 события» без неё не отвечают на вопрос, сработал ли нужный аккорд
-	 * или всё набил один одиночный модификатор. */
-	printf("      по аккордам:\n");
+	/* The per-chord breakdown is the reason for one binding per chord.
+	 * Without it, "62 events" does not answer if the right chord fired
+	 * or a single lone modifier produced all of them. */
+	printf("      per chord:\n");
 	for (int i = 0; i < chord_count; i++)
 		printf("        %-28s %u%s\n", chords[i].name, chords[i].triggers,
-		       chords[i].triggers ? "" : "   ← ни разу");
+		       chords[i].triggers ? "" : "   ← never");
 	return 0;
 }

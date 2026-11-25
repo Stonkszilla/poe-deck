@@ -29,6 +29,8 @@ Both pictures are real screenshots from a Steam Deck in Game Mode.
 - Desktop Mode is not supported. poe-deck runs only in Game Mode.
 - It has no loot filter editor.
 - It reads only the English game client.
+- Steam's performance overlay does not work while poe-deck runs. Both use the
+  same overlay layer in Game Mode.
 
 ## Install
 
@@ -64,6 +66,14 @@ git clone --recurse-submodules https://github.com/Stonkszilla/poe-deck.git
 cd poe-deck
 POE_DECK_VERSION=dev bash ci/bundle/build.sh dist
 ```
+
+## How it is made
+
+poe-deck is built with AI coding agents (Claude). A person sets the tasks, makes
+the design decisions and reviews the changes, and every change is tested on a
+real Steam Deck in Game Mode with the game running before a release.
+Development happens in a private repository; each release comes here as one
+signed commit, and that commit names Claude as co-author.
 
 ## Credits and license
 

@@ -1,28 +1,28 @@
-// Где демон берёт свои C-бинари.
+// Where the daemon gets its C binaries.
 //
-// Две формы запуска, и разница между ними — только в этом:
+// There are two launch forms, and this is the only difference between them:
 //
-//   bun src/daemon.ts      исходники; бинари собраны на Deck в ~/poe-deck-tools
-//                          (tools/dev-workspace.sh, путь разработчика)
-//   ./poe-deck             один исполняемый файл `bun build --compile`; бинари
-//                          собраны в CI и лежат в том же каталоге, что и он
+//   bun src/daemon.ts      sources; the binaries are built on the Deck in ~/poe-deck-tools
+//                          (tools/dev-workspace.sh, the developer path)
+//   ./poe-deck             one `bun build --compile` executable; the binaries
+//                          are built in CI and sit in the same directory as it
 //
-// Переменные POE_DECK_PROBE / _PANEL / _POINTER / _CLIP перебивают обе формы.
+// The variables POE_DECK_PROBE / _PANEL / _POINTER / _CLIP override both forms.
 
 import { dirname } from 'node:path'
 
 /**
- * Собран ли демон в один файл. У скомпилированного bun модули живут в
- * виртуальной ФС `/$bunfs/`, у исходников — на диске.
+ * Is the daemon built into one file. A compiled bun keeps its modules in the
+ * virtual FS `/$bunfs/`; the sources keep them on disk.
  */
 export const COMPILED = Bun.main.startsWith('/$bunfs/')
 
-/** Каталог C-бинарей по умолчанию для данной формы запуска. */
+/** Default directory of the C binaries for this launch form. */
 export function toolsDir (compiled = COMPILED, execPath = process.execPath, home = process.env.HOME): string {
   return compiled ? dirname(execPath) : `${home}/poe-deck-tools`
 }
 
-/** Путь к бинарю: переменная окружения, иначе каталог по умолчанию. */
+/** Path to a binary: the environment variable, else the default directory. */
 export function toolPath (name: string, override?: string): string {
   return override || `${toolsDir()}/${name}`
 }

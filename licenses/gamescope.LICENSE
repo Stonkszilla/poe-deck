@@ -1,11 +1,11 @@
-Из ValveSoftware/gamescope заимствован ровно один файл — описание приватного
-протокола `protocol/gamescope-action-binding.xml`, вендоренное как
-`docs/spikes/gamescope-hotkey/gamescope-action-binding.xml`. Файл несёт
-собственную лицензионную шапку (MIT) и приведён без изменений; текст шапки
-продублирован ниже.
+Exactly one file is taken from ValveSoftware/gamescope: the description of the private
+protocol `protocol/gamescope-action-binding.xml`, vendored as
+`docs/spikes/gamescope-hotkey/gamescope-action-binding.xml`. The file carries
+its own license header (MIT) and is included without changes; the header text
+is duplicated below.
 
-Кода gamescope в poe-deck нет: из XML генерируется маршалинг (wayland-scanner),
-это производная описания протокола, а не реализации компоновщика.
+poe-deck contains no gamescope code: the marshalling is generated from the XML
+(wayland-scanner). It is derived from the protocol description, not from the compositor implementation.
 
 ---
 

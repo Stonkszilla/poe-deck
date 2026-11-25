@@ -1,50 +1,50 @@
 /*
- * gs-panel — рендерер слоя оверлея poe-deck.
+ * gs-panel — the overlay layer renderer of poe-deck.
  *
- * Читает со stdin поток команд отрисовки и кладёт их в RGBA-окно поверх игры.
- * Это тот самый «маленький C-хелпер поверх Xlib/Xft» из ADR 0001, Решение 3, и
- * шов между ним и демоном на bun — ровно этот поток: однонаправленный, текстовый,
- * без обратного канала. Рендерер ничего не знает ни про предметы, ни про trade API.
+ * Reads a stream of draw commands from stdin and puts them into an RGBA window over the game.
+ * This is the "small C helper on Xlib/Xft" from ADR 0001, Decision 3, and
+ * the seam between it and the bun daemon is exactly this stream: one-way, text,
+ * with no back channel. The renderer knows nothing about items or the trade API.
  *
- * Родословная: X11-скелет (подключение, атом слоя, разбор очереди событий, тик)
- * взят у docs/spikes/gamescope-overlay/gs-overlay-probe.c, который на живом Deck
- * доказал, что окно с GAMESCOPE_EXTERNAL_OVERLAY получает слой поверх игры.
- * Тот зонд остаётся артефактом закрытого спайка оверлея и не трогается; здесь —
- * инструмент, который живёт дальше.
+ * Lineage: the X11 skeleton (connection, layer atom, event queue handling, tick)
+ * is taken from docs/spikes/gamescope-overlay/gs-overlay-probe.c, which proved on a live Deck
+ * that a window with GAMESCOPE_EXTERNAL_OVERLAY gets a layer over the game.
+ * That probe stays an artifact of the closed overlay spike and is not touched; this is
+ * the tool that lives on.
  *
- * Три команды, по одной на строку. Больше в панель прайс-чека не понадобилось:
+ * Three commands, one per line. The price check panel did not need more:
  *
- *   rect X Y W H RRGGBBAA          заливка прямоугольника
- *   text X Y WRAP RRGGBBAA PX ...  строка текста; WRAP=0 — без переносов,
- *                                  иначе перенос по словам в ширину WRAP пикселей
- *   show                           конец кадра: показать накопленное
+ *   rect X Y W H RRGGBBAA          fill a rectangle
+ *   text X Y WRAP RRGGBBAA PX ...  a line of text; WRAP=0 — no wrapping,
+ *                                  otherwise word wrap to a width of WRAP pixels
+ *   show                           end of frame: show what was collected
  *
- * Координаты — абсолютные, в пикселях вывода: по Ф3 спайка gamescope растягивает
- * окно внешнего оверлея на весь вывод независимо от запрошенной геометрии, поэтому
- * «окна» у нас нет, есть экран. Цвет — RRGGBBAA, альфа НЕ предумноженная: умножает
- * рендерер, потому что композитору буфер нужен предумноженным, а автору команд про
- * это знать незачем.
+ * Coordinates are absolute, in output pixels: by F3 of the spike, gamescope stretches
+ * the external overlay window over the whole output whatever geometry is requested, so
+ * we have no "window", we have the screen. Color is RRGGBBAA, alpha NOT premultiplied: the
+ * renderer multiplies, because the compositor needs a premultiplied buffer, and the author
+ * of the commands does not need to know about it.
  *
- * Всё, что не покрыто rect'ами, остаётся полностью прозрачным — иначе панель
- * закрыла бы игру целиком.
+ * All that rect commands do not cover stays fully transparent — otherwise the panel
+ * would cover the whole game.
  *
- * Кадр показывается по событию: как только со шва пришёл `show`, экран
- * обновляется. Это рабочий путь (ADR 0003, Решение 3) — цена предмета между
- * нажатиями кнопки не меняется, и перерисовывать её по таймеру незачем.
+ * A frame is shown on an event: as soon as `show` comes from the seam, the screen
+ * updates. This is the working path (ADR 0003, Decision 3) — the item price does not
+ * change between button presses, and there is no reason to redraw it on a timer.
  *
- * Режимы прогона:
- *   --seconds N   сколько держать окно (по умолчанию 30, 0 = пока не убьют:
- *                 так рендерер живёт под демоном всю игровую сессию)
- *   --hz N        ИЗМЕРИТЕЛЬНЫЙ режим: перерисовывать N раз в секунду и мерить
- *                 цену кадра. Показу картинки не нужен (0 = только по событию)
- *   --selfcheck   перед выходом прочитать свои же пиксели и напечатать факты
- *                 о кадре: сколько непрозрачных, где они, сколько различных
- *                 значений. По ним check.sh судит о панели без человека и без
- *                 сравнения картинок.
- *   --fonts       напечатать, во что фонтконфиг развернул «sans», и выйти.
- *                 Ответ на «какой шрифт вообще есть на стоковой SteamOS».
+ * Run modes:
+ *   --seconds N   how long to keep the window (default 30, 0 = until killed:
+ *                 this is how the renderer lives under the daemon for the whole game session)
+ *   --hz N        MEASUREMENT mode: redraw N times per second and measure
+ *                 the cost of a frame. Showing the picture does not need it (0 = only on an event)
+ *   --selfcheck   before exit, read back our own pixels and print facts
+ *                 about the frame: how many are opaque, where they are, how many distinct
+ *                 values. By them check.sh judges the panel without a human and without
+ *                 comparing pictures.
+ *   --fonts       print what fontconfig resolved "sans" to, and exit.
+ *                 The answer to "which font is there at all on stock SteamOS".
  *
- * Сборка — src/render/build.sh (один рецепт на check.sh и на Jenkins).
+ * Build — src/render/build.sh (one recipe for check.sh and for Jenkins).
  */
 
 #include <X11/Xlib.h>
@@ -60,16 +60,16 @@
 #include <time.h>
 #include <unistd.h>
 
-#define MAX_OPS    256    /* команд в кадре: панель прайс-чека укладывается в единицы */
-#define MAX_TEXT   512    /* байт в одной строке текста */
-#define MAX_FONTS  8      /* различных кеглей одновременно */
-#define MAX_FRAMES 100000 /* сколько замеров кадра держим для статистики */
+#define MAX_OPS    256    /* commands per frame: the price check panel needs only a few */
+#define MAX_TEXT   512    /* bytes in one line of text */
+#define MAX_FONTS  8      /* distinct font sizes at the same time */
+#define MAX_FRAMES 100000 /* how many frame measurements we keep for the statistics */
 
 enum op_kind { OP_RECT, OP_TEXT };
 
 struct op {
 	enum op_kind kind;
-	int x, y, w, h;      /* для OP_TEXT w — ширина переноса (0 = без), h не используется */
+	int x, y, w, h;      /* for OP_TEXT w is the wrap width (0 = none), h is not used */
 	uint32_t rgba;
 	int px;
 	char text[MAX_TEXT];
@@ -78,18 +78,18 @@ struct op {
 struct frame {
 	struct op ops[MAX_OPS];
 	int n;
-	int overflow;        /* команд пришло больше MAX_OPS — кадр неполон, и об этом надо сказать */
-	int checked;         /* глифы у этого кадра уже проверены: при 10 Гц иначе 10 жалоб в секунду */
+	int overflow;        /* more than MAX_OPS commands came — the frame is incomplete, and we must say so */
+	int checked;         /* glyphs of this frame are already checked: at 10 Hz we would otherwise complain 10 times per second */
 };
 
-/* Всё состояние отрисовки в одном месте: X-соединение, буфер кадра, кеш шрифтов. */
+/* All draw state in one place: X connection, frame buffer, font cache. */
 struct renderer {
 	Display *dpy;
 	int screen;
 	Window win;
 	Visual *visual;
 	Colormap cmap;
-	Pixmap buf;          /* двойная буферизация: собираем кадр здесь, потом копируем целиком */
+	Pixmap buf;          /* double buffering: we build the frame here, then copy it whole */
 	GC gc;
 	XftDraw *draw;
 	int w, h;
@@ -104,12 +104,12 @@ static double now_ms(void)
 	return ts.tv_sec * 1000.0 + ts.tv_nsec / 1e6;
 }
 
-/* RRGGBBAA (не предумноженная) → XRenderColor (предумноженная, 16 бит на канал).
+/* RRGGBBAA (not premultiplied) → XRenderColor (premultiplied, 16 bits per channel).
  *
- * Предумножение здесь не косметика: и Xft, и XCopyArea кладут в буфер именно те
- * биты, что мы дали, а gamescope композитит буфер как предумноженный. Отдать
- * 80FFFFFF без умножения — получить на экране пересвеченную панель, причём тем
- * сильнее, чем прозрачнее просили. */
+ * Premultiplication here is not cosmetic: both Xft and XCopyArea put into the buffer exactly the
+ * bits we gave, and gamescope composites the buffer as premultiplied. To give
+ * 80FFFFFF without multiplication is to get an overexposed panel on the screen, and the
+ * more transparent the request, the worse it gets. */
 static XRenderColor to_render_color(uint32_t rgba)
 {
 	unsigned r = (rgba >> 24) & 0xFF, g = (rgba >> 16) & 0xFF;
@@ -123,8 +123,8 @@ static XRenderColor to_render_color(uint32_t rgba)
 	return c;
 }
 
-/* То же самое, но как готовое 32-битное значение пикселя для XFillRectangle:
- * GC пишет сырые биты, конверсии из XRenderColor в этом пути нет. */
+/* The same, but as a ready 32-bit pixel value for XFillRectangle:
+ * the GC writes raw bits, there is no conversion from XRenderColor on this path. */
 static unsigned long to_pixel(uint32_t rgba)
 {
 	unsigned r = (rgba >> 24) & 0xFF, g = (rgba >> 16) & 0xFF;
@@ -133,9 +133,9 @@ static unsigned long to_pixel(uint32_t rgba)
 	     | ((g * a / 255) << 8) | (b * a / 255);
 }
 
-/* Шрифт по кеглю в ПИКСЕЛЯХ, а не в пунктах. Пункты Xft пересчитывает через DPI
- * X-сервера, а у Xwayland под gamescope он условный — кегль поехал бы вместе с
- * ним. На 7" 1280×800 читаемость решается пикселями, и задаёт их автор команд. */
+/* A font by size in PIXELS, not in points. Xft converts points through the DPI
+ * of the X server, and under gamescope Xwayland has a nominal one — the size would drift
+ * with it. On a 7" 1280×800 screen, pixels decide readability, and the author of the commands sets them. */
 static XftFont *font_for(struct renderer *r, int px)
 {
 	for (int i = 0; i < r->nfonts; i++)
@@ -156,8 +156,8 @@ static XftFont *font_for(struct renderer *r, int px)
 	return f;
 }
 
-/* Разобрать одну UTF-8 последовательность. Возвращает длину в байтах, кодовую
- * точку кладёт в *cp. Мусор — один байт как есть, лишь бы не зациклиться. */
+/* Parse one UTF-8 sequence. Returns the length in bytes and puts the code
+ * point into *cp. Garbage — one byte as is, only so that we do not loop. */
 static int utf8_next(const char *s, uint32_t *cp)
 {
 	unsigned char c = (unsigned char)s[0];
@@ -176,15 +176,15 @@ static int utf8_next(const char *s, uint32_t *cp)
 	return 1;
 }
 
-/* Назвать символы, которых в шрифте нет.
+/* Name the characters that the font does not have.
  *
- * Xft подмену шрифта НЕ делает: отсутствующий глиф уходит на экран пустым
- * квадратом и выглядит как «панель нарисовалась». Поймано на живом Deck
- * (прогон #68): «≈» в Noto Sans стоковой SteamOS отсутствует и приехало тофу.
- * Молча такое ловится только глазами, поэтому — в stderr.
+ * Xft does NOT substitute fonts: a missing glyph goes to the screen as an empty
+ * box and looks like "the panel was drawn". Caught on a live Deck
+ * (run #68): Noto Sans on stock SteamOS has no "≈", and it came out as tofu.
+ * Silently this is caught only by eye, so it goes to stderr.
  *
- * Спрашиваем FcCharSet, а не XftCharExists: последний в замере (тот же прогон,
- * разбор на mini) отвечал «есть» вообще на всё и такой проверкой не является. */
+ * We ask FcCharSet, not XftCharExists: in the measurement (the same run,
+ * analysis on mini) the latter answered "present" for everything and is not a check. */
 static void warn_missing_glyphs(struct renderer *r, XftFont *f, const char *s)
 {
 	(void)r;
@@ -202,8 +202,8 @@ static void warn_missing_glyphs(struct renderer *r, XftFont *f, const char *s)
 		n += snprintf(missing + n, sizeof missing - n, "U+%04X ", cp);
 	}
 	if (n)
-		fprintf(stderr, "нет глифов в шрифте, на экране будут пустые квадраты: %s"
-		                "(строка «%s»)\n", missing, s);
+		fprintf(stderr, "missing glyphs in the font, the screen will show empty boxes: %s"
+		                "(line \"%s\")\n", missing, s);
 }
 
 static int text_width(struct renderer *r, XftFont *f, const char *s, int len)
@@ -213,11 +213,11 @@ static int text_width(struct renderer *r, XftFont *f, const char *s, int len)
 	return gi.xOff;
 }
 
-/* Одна строка с переносом по словам. Возвращает y следующей строки.
+/* One line with word wrap. Returns y of the next line.
  *
- * Перенос считает рендерер, а не демон, и это не произвол: ширину строки знает
- * только тот, у кого открыт шрифт. Отдавать метрики обратно через шов нельзя —
- * шов однонаправленный по ADR 0001. */
+ * The renderer computes the wrap, not the daemon, and this is not arbitrary: only the one
+ * that has the font open knows the line width. The metrics must not go back over the seam —
+ * the seam is one-way by ADR 0001. */
 static int draw_wrapped(struct renderer *r, XftFont *f, XftColor *color,
                         int x, int y, int wrap, const char *s)
 {
@@ -233,7 +233,7 @@ static int draw_wrapped(struct renderer *r, XftFont *f, XftColor *color,
 	int start = 0;
 	while (start < len) {
 		int fit = start, last_space = -1;
-		/* Тянем, пока влезает; помним последний пробел как точку разрыва. */
+		/* Extend while it fits; remember the last space as the break point. */
 		while (fit < len) {
 			int next = fit + 1;
 			if (text_width(r, f, s + start, next - start) > wrap)
@@ -245,7 +245,7 @@ static int draw_wrapped(struct renderer *r, XftFont *f, XftColor *color,
 		int end = fit;
 		if (fit < len && last_space > start)
 			end = last_space;
-		/* Слово длиннее строки не зацикливает: режем как есть, но не на нуле. */
+		/* A word longer than the line does not loop: cut it as is, but not at zero. */
 		if (end == start)
 			end = start + 1;
 
@@ -260,8 +260,8 @@ static int draw_wrapped(struct renderer *r, XftFont *f, XftColor *color,
 	return y;
 }
 
-/* Собрать кадр в буфер и показать целиком. Промежуточных состояний на экране не
- * бывает: заливка прозрачным и отрисовка идут в Pixmap, наружу уходит один XCopyArea. */
+/* Build the frame in the buffer and show it whole. There are no intermediate states on the
+ * screen: the transparent fill and the drawing go to a Pixmap, one XCopyArea goes out. */
 static void render(struct renderer *r, struct frame *fr)
 {
 	XSetForeground(r->dpy, r->gc, 0x00000000);
@@ -292,9 +292,9 @@ static void render(struct renderer *r, struct frame *fr)
 	XCopyArea(r->dpy, r->buf, r->win, r->gc, 0, 0, r->w, r->h, 0, 0);
 }
 
-/* Разбор одной строки команд. Возврат: 0 — команда принята, 1 — это `show`,
- * -1 — строка не понята (сообщаем и продолжаем: молча глотать мусор из шва
- * значит потом искать пропавшую панель в пустоте). */
+/* Parse one command line. Returns: 0 — command accepted, 1 — it is `show`,
+ * -1 — the line is not understood (we report it and continue: to swallow garbage from the seam silently
+ * means to search later for a lost panel in the void). */
 static int parse_line(char *line, struct frame *fr)
 {
 	while (*line == ' ' || *line == '\t')
@@ -315,12 +315,12 @@ static int parse_line(char *line, struct frame *fr)
 	                  &op.x, &op.y, &op.w, &rgba, &op.px, &consumed) == 5 && consumed > 0) {
 		op.kind = OP_TEXT;
 		if (op.px <= 0) {
-			fprintf(stderr, "кегль должен быть больше нуля: %s\n", line);
+			fprintf(stderr, "font size must be greater than zero: %s\n", line);
 			return -1;
 		}
 		snprintf(op.text, sizeof op.text, "%s", line + consumed);
 	} else {
-		fprintf(stderr, "не разобрал команду: %s\n", line);
+		fprintf(stderr, "cannot parse command: %s\n", line);
 		return -1;
 	}
 
@@ -333,20 +333,20 @@ static int parse_line(char *line, struct frame *fr)
 	return 0;
 }
 
-/* Прочитать то, что уже пришло в stdin, не блокируясь. Возврат 0 = поток кончился.
+/* Read what already came to stdin, without blocking. Returns 0 = the stream ended.
  *
- * `dirty` взводится на каждом законченном кадре: по ADR 0003, Решение 3 демон
- * рисует ПО СОБЫТИЮ, а не по частоте, и без этого флага второй кадр от демона
- * (цена вслед за «ищу цену...») просто не попал бы на экран при --hz 0. */
+ * `dirty` is set on each finished frame: by ADR 0003, Decision 3 the daemon
+ * draws ON AN EVENT, not at a rate, and without this flag the second frame from the daemon
+ * (the price after "looking up price...") would never reach the screen at --hz 0. */
 static int drain_stdin(struct frame *next, struct frame *shown, int *has_frame, int *dirty)
 {
 	static char buf[8192];
 	static int len = 0;
 
-	/* Строка длиннее буфера означала бы read() нулевого размера, а это неотличимо
-	 * от конца потока — оверлей молча погас бы. Режем строку и говорим об этом. */
+	/* A line longer than the buffer would mean a read() of zero size, and that looks the same
+	 * as the end of the stream — the overlay would silently go out. We cut the line and say so. */
 	if (len >= (int)sizeof buf - 1) {
-		fprintf(stderr, "строка длиннее %zu байт — отброшена\n", sizeof buf);
+		fprintf(stderr, "line longer than %zu bytes, dropped\n", sizeof buf);
 		len = 0;
 	}
 
@@ -372,12 +372,12 @@ static int drain_stdin(struct frame *next, struct frame *shown, int *has_frame, 
 	return 1;
 }
 
-/* Прочитать собственное окно и напечатать факты о кадре.
+/* Read our own window and print facts about the frame.
  *
- * Смысл — проверяемость без глаз: check.sh на Xvfb и прогон на Deck судят по
- * одним и тем же четырём числам. Панель без текста и панель с текстом различаются
- * количеством различных значений пикселя (сглаживание даёт десятки градаций),
- * а «панель не закрыла игру» — долей прозрачных. */
+ * The point is to check without eyes: check.sh on Xvfb and the run on the Deck judge by
+ * the same four numbers. A panel without text and a panel with text differ
+ * by the number of distinct pixel values (antialiasing gives tens of levels),
+ * and "the panel did not cover the game" by the share of transparent ones. */
 static int cmp_u32(const void *a, const void *b)
 {
 	uint32_t x = *(const uint32_t *)a, y = *(const uint32_t *)b;
@@ -388,7 +388,7 @@ static void selfcheck(struct renderer *r)
 {
 	XImage *img = XGetImage(r->dpy, r->win, 0, 0, r->w, r->h, AllPlanes, ZPixmap);
 	if (!img) {
-		printf("selfcheck: окно не прочиталось\n");
+		printf("selfcheck: cannot read the window\n");
 		return;
 	}
 
@@ -421,33 +421,33 @@ static void selfcheck(struct renderer *r)
 		free(vals);
 	}
 
-	printf("selfcheck: всего %ld, непрозрачных %ld, прозрачных %ld\n",
+	printf("selfcheck: total %ld, opaque %ld, transparent %ld\n",
 	       total, opaque, total - opaque);
 	if (maxx >= 0)
-		printf("selfcheck: bbox непрозрачных %d,%d %dx%d\n",
+		printf("selfcheck: opaque bbox %d,%d %dx%d\n",
 		       minx, miny, maxx - minx + 1, maxy - miny + 1);
 	else
-		printf("selfcheck: bbox непрозрачных пуст\n");
-	printf("selfcheck: различных значений пикселя %ld\n", distinct);
-	printf("selfcheck: пиксель 0,0 = %08x\n", (uint32_t)XGetPixel(img, 0, 0));
+		printf("selfcheck: opaque bbox empty\n");
+	printf("selfcheck: distinct pixel values %ld\n", distinct);
+	printf("selfcheck: pixel 0,0 = %08x\n", (uint32_t)XGetPixel(img, 0, 0));
 	XDestroyImage(img);
 }
 
-/* Во что фонтконфиг развернул «sans» на этой машине. На стоковой SteamOS ответ
- * заранее неизвестен, а от него зависит, читаема ли панель — печатаем факт. */
+/* What fontconfig resolved "sans" to on this machine. On stock SteamOS the answer
+ * is not known in advance, and the readability of the panel depends on it, so we print the fact. */
 static void report_font(struct renderer *r, int px)
 {
 	XftFont *f = font_for(r, px);
 	if (!f) {
-		printf("шрифт: sans:pixelsize=%d НЕ открылся\n", px);
+		printf("font: sans:pixelsize=%d did NOT open\n", px);
 		return;
 	}
 	FcChar8 *file = NULL, *family = NULL;
 	FcPatternGetString(f->pattern, FC_FILE, 0, &file);
 	FcPatternGetString(f->pattern, FC_FAMILY, 0, &family);
-	printf("шрифт: sans:pixelsize=%d → %s (%s), высота строки %d px (ascent %d, descent %d)\n",
+	printf("font: sans:pixelsize=%d → %s (%s), line height %d px (ascent %d, descent %d)\n",
 	       px, family ? (const char *)family : "?",
-	       file ? (const char *)file : "файл не назван",
+	       file ? (const char *)file : "file not named",
 	       f->ascent + f->descent, f->ascent, f->descent);
 }
 
@@ -479,7 +479,7 @@ int main(int argc, char **argv)
 		else if (!strcmp(argv[i], "--fonts"))
 			fonts_only = 1;
 		else {
-			fprintf(stderr, "использование: %s [--seconds N] [--hz N] "
+			fprintf(stderr, "usage: %s [--seconds N] [--hz N] "
 			                "[--selfcheck] [--fonts]\n", argv[0]);
 			return 2;
 		}
@@ -488,7 +488,7 @@ int main(int argc, char **argv)
 	Display *dpy = XOpenDisplay(NULL);
 	if (!dpy) {
 		const char *d = getenv("DISPLAY");
-		fprintf(stderr, "не открылся DISPLAY=%s\n", d ? d : "(не задан)");
+		fprintf(stderr, "cannot open DISPLAY=%s\n", d ? d : "(not set)");
 		return 3;
 	}
 
@@ -496,20 +496,20 @@ int main(int argc, char **argv)
 	r.w = DisplayWidth(dpy, r.screen);
 	r.h = DisplayHeight(dpy, r.screen);
 
-	/* 32-битный TrueColor visual — то, ради чего эта программа не может быть
-	 * XCreateSimpleWindow, как зонд спайка: у визуала по умолчанию нет альфы,
-	 * и прозрачного фона на нём не получится никакими атомами. */
+	/* A 32-bit TrueColor visual is the reason this program cannot be
+	 * XCreateSimpleWindow, as the spike probe is: the default visual has no alpha,
+	 * and no atoms can give a transparent background on it. */
 	XVisualInfo vi;
 	if (!XMatchVisualInfo(dpy, r.screen, 32, TrueColor, &vi)) {
-		fprintf(stderr, "нет 32-битного TrueColor visual — прозрачный оверлей невозможен\n");
+		fprintf(stderr, "no 32-bit TrueColor visual, a transparent overlay is impossible\n");
 		return 4;
 	}
 	r.visual = vi.visual;
 	r.cmap = XCreateColormap(dpy, RootWindow(dpy, r.screen), r.visual, AllocNone);
 
 	if (fonts_only) {
-		/* Шрифту X-окно не нужно, а на Deck этот режим гоняется и без Game Mode. */
-		printf("вывод %dx%d, visual 32 бита есть\n", r.w, r.h);
+		/* A font does not need an X window, and on the Deck this mode also runs outside Game Mode. */
+		printf("output %dx%d, 32-bit visual present\n", r.w, r.h);
 		for (int px = 16; px <= 28; px += 4)
 			report_font(&r, px);
 		XCloseDisplay(dpy);
@@ -527,8 +527,8 @@ int main(int argc, char **argv)
 	                      CWColormap | CWBorderPixel | CWBackPixel | CWEventMask, &attrs);
 	XStoreName(dpy, r.win, "gs-panel");
 
-	/* Атом ставится ДО XMapWindow: steamcompmgr читает его в map_win. Тот же
-	 * порядок, что у зонда спайка, и по той же причине. */
+	/* The atom is set BEFORE XMapWindow: steamcompmgr reads it in map_win. The same
+	 * order as in the spike probe, and for the same reason. */
 	Atom overlay = XInternAtom(dpy, "GAMESCOPE_EXTERNAL_OVERLAY", False);
 	uint32_t one = 1;
 	XChangeProperty(dpy, r.win, overlay, XA_CARDINAL, 32, PropModeReplace,
@@ -540,7 +540,7 @@ int main(int argc, char **argv)
 
 	XMapWindow(dpy, r.win);
 	XSync(dpy, False);
-	printf("окно 0x%lx, вывод %dx%d, GAMESCOPE_EXTERNAL_OVERLAY = 1\n", r.win, r.w, r.h);
+	printf("window 0x%lx, output %dx%d, GAMESCOPE_EXTERNAL_OVERLAY = 1\n", r.win, r.w, r.h);
 	report_font(&r, 22);
 	fflush(stdout);
 
@@ -554,14 +554,14 @@ int main(int argc, char **argv)
 
 	for (;;) {
 		double t = now_ms();
-		/* seconds=0 — держать, пока не убьют: так рендерер живёт под демоном,
-		 * всю игровую сессию, а гасит панель демон пустым кадром. */
+		/* seconds=0 — keep until killed: this is how the renderer lives under the daemon
+		 * for the whole game session, and the daemon hides the panel with an empty frame. */
 		if (seconds > 0 && t - start >= seconds * 1000.0)
 			break;
 
-		/* Событий из этого слоя не приходит (Ф2 спайка), но очередь всё равно
-		 * надо разбирать: иначе она растёт, а Expose останется необработанным
-		 * там, где сервер его всё-таки шлёт. */
+		/* No events come from this layer (F2 of the spike), but the queue still
+		 * must be drained: otherwise it grows, and an Expose stays unhandled
+		 * where the server does send it. */
 		while (XPending(dpy)) {
 			XEvent ev;
 			XNextEvent(dpy, &ev);
@@ -577,8 +577,8 @@ int main(int argc, char **argv)
 			if (select(STDIN_FILENO + 1, &rfds, NULL, NULL, &zero) > 0
 			    && !drain_stdin(&next, &shown, &has_frame, &dirty)) {
 				stdin_open = 0;
-				/* Поток кончился без `show` — считаем накопленное кадром,
-				 * иначе однократный пайп из shell'а не нарисовал бы ничего. */
+				/* The stream ended without `show` — we take what was collected as a frame,
+				 * otherwise a one-shot pipe from a shell would draw nothing. */
 				if (!has_frame && next.n) {
 					shown = next;
 					has_frame = 1;
@@ -587,11 +587,11 @@ int main(int argc, char **argv)
 			}
 		}
 
-		/* Рисуем по событию (новый кадр со шва) — это рабочий путь по ADR 0003,
-		 * Решение 3. `--hz` поверх него остаётся измерительным режимом: он
-		 * перерисовывает то же самое ради статистики, а не ради картинки.
-		 * Замер цены и есть эти times[]: каждая запись — полный цикл сборки
-		 * кадра до XSync, то есть то, за что платит Deck. */
+		/* We draw on an event (a new frame from the seam) — the working path by ADR 0003,
+		 * Decision 3. `--hz` on top of it stays a measurement mode: it
+		 * redraws the same thing for the statistics, not for the picture.
+		 * The cost measurement is these times[]: each entry is a full cycle of building
+		 * the frame up to XSync, that is, what the Deck pays for. */
 		if (has_frame && (dirty || nframes == 0 || (hz > 0 && now_ms() >= next_draw))) {
 			double d0 = now_ms();
 			render(&r, &shown);
@@ -606,12 +606,12 @@ int main(int argc, char **argv)
 	}
 
 	if (next.overflow)
-		printf("⚠  команд в кадре больше %d — кадр показан неполным\n", MAX_OPS);
+		printf("⚠  more than %d commands in the frame, the frame is shown incomplete\n", MAX_OPS);
 	if (!has_frame)
-		printf("⚠  ни одного кадра со stdin — рисовать было нечего\n");
+		printf("⚠  no frame on stdin, nothing to draw\n");
 
 	double elapsed = (now_ms() - start) / 1000.0;
-	printf("\nперерисовок: %d за %.1f с (запрошено %d Гц, вышло %.1f)\n",
+	printf("\nredraws: %d in %.1f s (requested %d Hz, got %.1f)\n",
 	       nframes, elapsed, hz, nframes / (elapsed > 0 ? elapsed : 1));
 	if (nframes > 0) {
 		double sum = 0, max = 0;
@@ -621,7 +621,7 @@ int main(int argc, char **argv)
 				max = times[i];
 		}
 		qsort(times, (size_t)nframes, sizeof *times, cmp_double);
-		printf("кадр: среднее %.2f мс, медиана %.2f мс, 95-й перцентиль %.2f мс, максимум %.2f мс\n",
+		printf("frame: mean %.2f ms, median %.2f ms, 95th percentile %.2f ms, max %.2f ms\n",
 		       sum / nframes, percentile(times, nframes, 0.5),
 		       percentile(times, nframes, 0.95), max);
 	}
@@ -630,7 +630,7 @@ int main(int argc, char **argv)
 	if (!getrusage(RUSAGE_SELF, &ru)) {
 		double cpu = ru.ru_utime.tv_sec + ru.ru_utime.tv_usec / 1e6
 		           + ru.ru_stime.tv_sec + ru.ru_stime.tv_usec / 1e6;
-		printf("CPU процесса: %.2f с за %.1f с прогона — %.1f%% одного ядра\n",
+		printf("process CPU: %.2f s in %.1f s of run, %.1f%% of one core\n",
 		       cpu, elapsed, elapsed > 0 ? 100.0 * cpu / elapsed : 0);
 	}
 
@@ -643,6 +643,6 @@ int main(int argc, char **argv)
 	XFreePixmap(dpy, r.buf);
 	XDestroyWindow(dpy, r.win);
 	XCloseDisplay(dpy);
-	printf("убрал окно\n");
+	printf("window removed\n");
 	return 0;
 }
