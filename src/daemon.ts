@@ -86,11 +86,14 @@ import { dirname } from 'node:path'
 import { effectiveSettings, loadConfig } from './config'
 import { gameFeatures, type GameVersion } from './game-features'
 import { loadDonorParser } from './donor'
+import { countMarks, formatMapCheck, loadProfile, mapCheckOf } from './map-check'
 import { isPressed, parsePointerLine } from './input/pointer'
-import { clearFrame, explainFailure, readyFrame } from './panel'
+import { clearFrame, explainFailure, itemTitle, readyFrame } from './panel'
 import {
   describe as describeOverlay,
   describeToggle,
+  flipOf,
+  isMapResult,
   newOverlay,
   step as overlayStep,
   type Overlay,
@@ -115,6 +118,7 @@ import {
   DEFAULT_SEARCH_MODE,
   MODE_LABEL,
   statFilters,
+  type PricedItem,
   type SearchMode
 } from './trade/query'
 
@@ -492,6 +496,11 @@ export async function main (): Promise<number> {
   log(`config: ${config.exists ? config.path : `${config.path} not found — defaults`}`)
   for (const error of [...config.errors, ...effective.errors]) log(`✗  config: ${error} — ignored, run poe-deck doctor`)
   log(`price mode: ${MODE_LABEL[priceMode]} (${priceMode}); change with price_mode in the config or in the editor`)
+  // The map check profile is read once, like the config: a change needs a restart.
+  // Errors do not stop the daemon, the lines that parsed stay in force.
+  const mapProfile = loadProfile()
+  log(`map check profile: ${mapProfile.profile.source}, ${mapProfile.profile.rules.length} rules`)
+  for (const error of mapProfile.errors) log(`✗  map check profile: ${error} — ignored`)
   log(`session environment: ${envFile ?? 'no gamescope file, using what is set'}; DISPLAY=${display}`)
 
   // ── check the environment and the protocol BEFORE everything else ─────────
@@ -805,6 +814,23 @@ export async function main (): Promise<number> {
     if (!fresh) {
       if (isRepeatOfPriced(text, pricedBuffer, overlay.last)) {
         if (!inGame) { log('⏸  the game left the screen while reading the clipboard — not showing the item'); return }
+        // A map on the screen: the second press flips between the map check and the price.
+        // A hidden panel still recalls: after L4 the question is "what did I see".
+        const flip = flipOf(overlay)
+        if (flip === 'wait') { log('★  flip: the price of this map is on its way — skipping the press'); return }
+        if (flip === 'fetch') {
+          const item = parser.parseClipboard(text)
+          if (item.isErr()) { log(`✗  parser rejected the map on the flip: ${String(item.error)}`); return }
+          log('★  flip: map check -> price, one trade request')
+          await showPrice(item.value, text, t0, Date.now(), true)
+          return
+        }
+        if (flip === 'flip') {
+          send({ kind: 'flip' })
+          log(`★  flip: ${overlay.mode === 'map' ? 'price -> map check' : 'map check -> price'}, no request`)
+          await hintScreenshot(overlay.mode === 'map' ? 'map' : 'mapprice')
+          return
+        }
         const was = overlay
         send({ kind: 'recall' })
         log(`★  same item again, no request: ${describeToggle(was, overlay, Date.now())}`)
@@ -846,6 +872,32 @@ export async function main (): Promise<number> {
     // mod of a unique that the trade does not have under this type.
     if (withMods) log(`   filters: ${sent.map(f => [f.id, ...(f.alt ?? [])].join('|')).join(', ')}`)
 
+    // A map with mods gets the map check instead of the price: the
+    // question for a map is "do I run it". No trade request, so no rate limit spent.
+    // A map without mods (white, unidentified) goes on to the price as before.
+    const map = mapCheckOf(text, mapProfile.profile)
+    if (map) {
+      for (const out of formatMapCheck(map)) log(out)
+      send({ kind: 'map', map })
+      pricedBuffer = text
+      const marks = countMarks(map)
+      log(`⏱  press -> map check: ${Date.now() - t0} ms`)
+      log(`✓  map check shown [deadly ${marks.deadly}, warning ${marks.warning}, good ${marks.good}]`)
+      await hintScreenshot('map')
+      return
+    }
+
+    await showPrice(item, text, t0, tClip, false)
+  }
+
+  /**
+   * The trade half of a press: the waiting frame, the request, the price on the panel.
+   * `ofMap` is a second L5 on a map whose check is on the screen: the price goes out
+   * tied to that map check, so that the next L5 flips back to it.
+   */
+  const showPrice = async (item: PricedItem, text: string, t0: number, tClip: number, ofMap: boolean): Promise<void> => {
+    const withMods = statFilters(item).length
+    const map = ofMap && overlay.last && isMapResult(overlay.last) ? overlay.last : undefined
     // The waiting frame goes out AT ONCE: the network comes next, and without it the panel is silent
     // for exactly the time in which the user decides the thing is broken.
     const tParse = Date.now()
@@ -856,12 +908,15 @@ export async function main (): Promise<number> {
       const check = await priceOf(item, { league, mode: priceMode })
       const tPrice = Date.now()
       log(`   ${formatPriceCheck(item, check)}`)
-      send({ kind: 'price', item, check })
+      // The panel title in the log: LIFECYCLE checks that the price of a rare map
+      // carries the map name, not the base `Map`.
+      log(`   panel title: ${itemTitle(item)}`)
+      send({ kind: 'price', item, check, map })
       pricedBuffer = text
       priced++
       log(`⏱  press -> price: ${tPrice - t0} ms (clipboard ${tClip - t0}, parser ${tParse - tClip}, trade ${tPrice - tParse})`)
-      log(`✓  price shown [${withMods ? 'with mods' : 'no mods'}]`)
-      await hintScreenshot(withMods ? 'mods' : 'nomods')
+      log(`✓  price shown [${map ? 'map' : withMods ? 'with mods' : 'no mods'}]`)
+      await hintScreenshot(map ? 'mapprice' : withMods ? 'mods' : 'nomods')
     } catch (err) {
       // A trade failure is NOT a daemon failure: the daemon stays alive, and the person
       // learns what happened from the panel, not from the log, which they

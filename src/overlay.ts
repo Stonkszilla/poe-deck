@@ -32,6 +32,9 @@ import {
   editorView,
   errorFrame,
   agoText,
+  FLIP_TO_MAP,
+  MAIN_PRICE,
+  mapCheckFrame,
   noResultFrame,
   priceFrame,
   rateLimitOverFrame,
@@ -41,12 +44,13 @@ import {
   type Failure
 } from './panel'
 import type { PriceCheck } from './price-check'
+import type { MapCheck } from './map-check'
 import { priceAmountText } from './trade/price'
 import { DEFAULT_SEARCH_MODE, type SearchMode } from './trade/query'
 import { toStatFilters } from './trade/filters'
 import type { PricedItem } from './trade/query'
 
-export type OverlayMode = 'idle' | 'checking' | 'price' | 'editor' | 'error' | 'notice'
+export type OverlayMode = 'idle' | 'checking' | 'price' | 'editor' | 'error' | 'notice' | 'map'
 
 export interface Overlay {
   mode: OverlayMode
@@ -86,15 +90,70 @@ export interface Overlay {
    * on which the frame changes to "you can press again".
    */
   failure?: Failure
+  /** The map check on the screen. */
+  map?: MapCheck
 }
 
-/** A finished result: what was shown, with which set and when. */
-export interface LastResult {
+/** A finished price result: what was shown, with which set and when. */
+export interface PriceResult {
   item: PricedItem
   check: PriceCheck
   editor: Editor
   /** When it was received. The age goes to the panel: a price without a time is a promise. */
   at: number
+  /**
+   * The map check of the same item, when this is the price of a map. It is kept
+   * with the price, not beside it: L4 and the timeout clear the panel, and the next L5
+   * must still be able to flip back to the map check without reading the map again.
+   */
+  map?: MapResult
+}
+
+/**
+ * A finished map check. It is a result like a price: L4 hides it and brings it back,
+ * and bringing back the price of the item before the map instead would show a
+ * foreign answer under the gesture "show what I just saw".
+ */
+export interface MapResult {
+  map: MapCheck
+  at: number
+  /** The price of the same map, once asked for with a second L5. The next flip shows it without a request. */
+  price?: PriceResult
+}
+
+export type LastResult = PriceResult | MapResult
+
+/** A price result always has the item; a map result never has it (a price can carry `map`). */
+export const isMapResult = (last: LastResult): last is MapResult => !('item' in last)
+
+/**
+ * What a second L5 on the same map does, decided from the panel state:
+ *
+ * - `fetch`: the map check is on the screen and its price was never asked for — one trade request;
+ * - `flip`: the other view of the same map is already known — no request;
+ * - `wait`: the price of the map is on its way — the press would only race the answer;
+ * - `recall`: the panel is not on the screen, or the item is not a map — bring back the last result, as before.
+ *
+ * A hidden panel recalls instead of flipping: after L4 the player asks "what did I see", not "show the other side".
+ */
+export type FlipAction = 'fetch' | 'flip' | 'wait' | 'recall'
+
+export function flipOf (overlay: Overlay): FlipAction {
+  const last = overlay.last
+  if (!last) return 'recall'
+  if (isMapResult(last)) {
+    if (overlay.mode === 'map') return last.price ? 'flip' : 'fetch'
+    if (overlay.mode === 'checking') return 'wait'
+    return 'recall'
+  }
+  if (last.map && (overlay.mode === 'price' || overlay.mode === 'editor')) return 'flip'
+  return 'recall'
+}
+
+/** The price frame of the current result, with the flip hint when it is the price of a map. */
+function priceFrameOf (item: PricedItem, check: PriceCheck, last: LastResult | undefined, previousMs?: number): string[] {
+  const ofMap = last && !isMapResult(last) && last.item === item && last.map
+  return priceFrame(item, check, previousMs, MAIN_PRICE, ofMap ? FLIP_TO_MAP : undefined)
 }
 
 export interface OverlayTimes {
@@ -110,7 +169,10 @@ export const DEFAULT_TIMES: OverlayTimes = { ttlMs: 15_000, leaveMs: 1_200, pxPe
 
 export type OverlayEvent =
   | { kind: 'checking', item: PricedItem }
-  | { kind: 'price', item: PricedItem, check: PriceCheck }
+  /** `map`: this is the price of the map whose check was on the panel. */
+  | { kind: 'price', item: PricedItem, check: PriceCheck, map?: MapResult }
+  /** A copied map with mods: the map check instead of the price, no trade request. */
+  | { kind: 'map', map: MapCheck }
   /**
    * `press` is a failure on the L5 press itself, not a late search answer: the player just
    * asked for the panel, and the earlier "hidden with the gesture" does not mute it.
@@ -120,6 +182,11 @@ export type OverlayEvent =
   | { kind: 'act' }
   /** The second gesture: hide the panel or bring back the last result, without a request. */
   | { kind: 'toggle' }
+  /**
+   * A second L5 on the same map whose other view is already known (`flipOf` → `flip`):
+   * map check → price or price → map check, without a request.
+   */
+  | { kind: 'flip' }
   /**
    * L5 on the same clipboard that already has a result: show it, like
    * the L4 recall, without a request. No new item means no new question to trade either.
@@ -146,6 +213,20 @@ export const newOverlay = (mode: SearchMode = DEFAULT_SEARCH_MODE): Overlay =>
  * Shared by L4 and a repeated L5, so that the two recall paths do not drift apart.
  */
 function restore (overlay: Overlay, last: LastResult, now: number, times: OverlayTimes): OverlayStep {
+  if (isMapResult(last)) {
+    return {
+      overlay: {
+        mode: 'map',
+        map: last.map,
+        hideAt: now + times.ttlMs,
+        leaveAt: 0,
+        priceMode: overlay.priceMode,
+        last,
+        hidden: false
+      },
+      frame: mapCheckFrame(last.map, Math.max(0, now - last.at))
+    }
+  }
   return {
     overlay: {
       mode: 'price',
@@ -158,7 +239,7 @@ function restore (overlay: Overlay, last: LastResult, now: number, times: Overla
       last,
       hidden: false
     },
-    frame: priceFrame(last.item, last.check, Math.max(0, now - last.at))
+    frame: priceFrameOf(last.item, last.check, last, Math.max(0, now - last.at))
   }
 }
 
@@ -212,7 +293,10 @@ export function step (
         // item: selecting it again for each item is work, not a setting.
         priceMode: editor.appliedMode
       }
-      const last: LastResult = { item: event.item, check: event.check, editor, at: now }
+      // The map stays with its price through a filtered search on the same item: a confirm
+      // in the editor asks again about the same map, and the flip back must survive it.
+      const before = overlay.last && !isMapResult(overlay.last) && overlay.last.item === event.item ? overlay.last.map : undefined
+      const last: PriceResult = { item: event.item, check: event.check, editor, at: now, map: event.map ?? before }
 
       // A late answer to a search that the player already "cancelled" with the gesture: we
       // remember the result, but do not raise the panel by ourselves (epic requirement).
@@ -224,7 +308,17 @@ export function step (
         overlay: { ...next, last },
         frame: next.mode === 'editor'
           ? view(next, layout).lines
-          : priceFrame(event.item, event.check)
+          : priceFrameOf(event.item, event.check, last)
+      }
+    }
+
+    case 'map': {
+      // A press, like `checking`: the player asked for the panel, so an earlier
+      // hide does not mute it. Nothing to edit and no network: the frame is final.
+      const last: MapResult = { map: event.map, at: now }
+      return {
+        overlay: { mode: 'map', map: event.map, hideAt: now + times.ttlMs, leaveAt: 0, priceMode: overlay.priceMode, last },
+        frame: mapCheckFrame(event.map)
       }
     }
 
@@ -345,6 +439,23 @@ export function step (
       return restore(overlay, last, now, times)
     }
 
+    case 'flip': {
+      // The other view of the same map, both already known: no request.
+      // The price keeps its age — the market moved since. The map check does not:
+      // its mods do not change, and "previous result" on it would read as a warning.
+      if (flipOf(overlay) !== 'flip') return { overlay }
+      const last = overlay.last!
+      if (isMapResult(last)) {
+        return restore(overlay, { ...last.price!, map: { map: last.map, at: last.at } }, now, times)
+      }
+      const { map, ...price } = last as PriceResult
+      const back: MapResult = { ...map!, price }
+      return {
+        overlay: { mode: 'map', map: back.map, hideAt: now + times.ttlMs, leaveAt: 0, priceMode: overlay.priceMode, last: back },
+        frame: mapCheckFrame(back.map)
+      }
+    }
+
     case 'notice':
       // A message does not interrupt a price or an edit: a player who already presses
       // the button knows that poe-deck works. A panel hidden with the gesture also
@@ -375,7 +486,7 @@ export function step (
       }
       if (overlay.mode === 'editor' && overlay.leaveAt && now >= overlay.leaveAt) {
         const next: Overlay = { ...overlay, mode: 'price', leaveAt: 0, hideAt: now + times.ttlMs }
-        return { overlay: next, frame: priceFrame(overlay.item!, overlay.check!) }
+        return { overlay: next, frame: priceFrameOf(overlay.item!, overlay.check!, overlay.last) }
       }
       if (overlay.hideAt && now >= overlay.hideAt) {
         // The deadline passed: the panel goes out, but the result can still be brought back:
@@ -404,9 +515,11 @@ export function describeToggle (before: Overlay, after: Overlay, now: number): s
   }
   const last = after.last
   if (!last) return before.mode === 'idle' ? 'nothing to hide — hint shown' : `restored ${after.mode}`
+  const age = agoText(Math.max(0, now - last.at))
+  if (isMapResult(last)) return `restored map check ${last.map.name ?? last.map.base}, age ${age}`
   const name = last.item.info.name ?? last.item.info.refName
   const price = last.check.price ? priceAmountText(last.check.price) : 'no price'
-  return `restored ${name}: ${price}, age ${agoText(Math.max(0, now - last.at))}`
+  return `restored ${name}: ${price}, age ${age}`
 }
 
 /** A log line about what is on the panel now. For runs on hardware. */
@@ -421,8 +534,9 @@ export function describe (overlay: Overlay): string {
 /** The frame of the current state. Needed when the frame is lost, for example when the renderer restarted. */
 export function currentFrame (overlay: Overlay, layout?: EditorLayout): string[] {
   if (overlay.mode === 'editor' && overlay.item && overlay.editor) return view(overlay, layout).lines
-  if (overlay.mode === 'price' && overlay.item && overlay.check) return priceFrame(overlay.item, overlay.check)
+  if (overlay.mode === 'price' && overlay.item && overlay.check) return priceFrameOf(overlay.item, overlay.check, overlay.last)
   if (overlay.mode === 'checking' && overlay.item) return checkingFrame(overlay.item)
+  if (overlay.mode === 'map' && overlay.map) return mapCheckFrame(overlay.map)
   if (overlay.mode === 'error' && overlay.failure) return errorFrame(overlay.failure)
   return clearFrame()
 }

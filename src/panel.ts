@@ -44,8 +44,9 @@ import {
 import type { ExchangeReference } from './trade/ninja'
 import { scopeNote } from './price-check'
 import { groupLabel, rollText, type ModFilter } from './trade/filters'
-import { MODE_LABEL, type PricedItem } from './trade/query'
+import { isMapItem, MODE_LABEL, type PricedItem } from './trade/query'
 import type { PriceCheck } from './price-check'
+import { countMarks, readMap, verdictText, type MapCheck, type MapMod, type Mark } from './map-check'
 
 // ── geometry and palette ─────────────────────────────────────────────────────
 //
@@ -205,6 +206,8 @@ export function laidOutFrame (
     // being computed here, and nobody else can compute it.
     const cells = row.cells ?? [row.text]
     cells.forEach((cell, part) => {
+      // An empty cell keeps its column and draws nothing: no `text` command with no text.
+      if (!cell) return
       const { x, w } = columnSpan(box, part, cells.length, row.stops)
       out.push(`text ${x} ${y} 0 ${row.color} ${row.px} ${fit(cell, row.px, w)}`)
     })
@@ -224,14 +227,24 @@ export function clearFrame (): string[] {
 
 // ── what exactly we show ─────────────────────────────────────────────────────
 
-/** Item name for the title. A unique needs both names, the rest only need the base. */
+/**
+ * Item name for the title. A unique needs both names, the rest only need the base.
+ * A map is the exception: the donor names every map by its base, `Map`, rare names
+ * included, so the title read `Map` on the price of `Foe Frontier` (deck-probe #182).
+ * The name is taken from the clipboard head, the same way the map check reads it.
+ */
 export function itemTitle (item: PricedItem): string {
-  return item.info.name ?? item.info.refName
+  return mapName(item) ?? item.info.name ?? item.info.refName
+}
+
+function mapName (item: PricedItem): string | undefined {
+  if (!isMapItem(item) || !item.rawText) return undefined
+  return readMap(item.rawText)?.name
 }
 
 function itemSubtitle (item: PricedItem): string {
   const parts: string[] = []
-  if (item.info.name && item.info.name !== item.info.refName) parts.push(item.info.refName)
+  if (itemTitle(item) !== item.info.refName) parts.push(item.info.refName)
   if (item.rarity) parts.push(item.rarity)
   // The map tier is what the map is searched by (`map_tier`), and the player must
   // see it on the panel: without it the T14 and T16 prices look like one price (tester).
@@ -331,8 +344,10 @@ function faustusRow (reference: ExchangeReference, stack: number | undefined): R
  * the same filter set, but the market may have moved since then.
  *
  * `main` is which price is big, by default `MAIN_PRICE`.
+ *
+ * `flip` is the bottom hint on the price of a map: what the next L5 shows (`FLIP_TO_MAP`).
  */
-export function priceFrame (item: PricedItem, check: PriceCheck, previousMs?: number, main: MainPrice = MAIN_PRICE): string[] {
+export function priceFrame (item: PricedItem, check: PriceCheck, previousMs?: number, main: MainPrice = MAIN_PRICE, flip?: string): string[] {
   const rows: Row[] = [
     text(itemTitle(item), 24, ACCENT),
     text(itemSubtitle(item) || 'item parsed', 18, MUTED),
@@ -406,7 +421,98 @@ export function priceFrame (item: PricedItem, check: PriceCheck, previousMs?: nu
   } else if (check.fork === 'search' && check.skippedExplicits) {
     rows.push(text(scopeNote(item, check.skippedExplicits), 18, WARN))
   }
+  if (flip) rows.push(rule(), text(flip, 18, NOTE))
 
+  return frame(rows)
+}
+
+// ── map check ────────────────────────────────────────────────────────────────
+
+const GOOD = '7CC47FFF'
+
+/**
+ * Mark → label and color. The label is a word, not only a color: a red line and
+ * an orange line are hard to tell apart on a 7" screen in sunlight, and for
+ * some players at all.
+ */
+const MARK_STYLE: Record<Mark, { label: string, color: string }> = {
+  deadly: { label: 'DEADLY', color: ERROR },
+  warning: { label: 'WARN', color: WARN },
+  good: { label: 'GOOD', color: GOOD }
+}
+
+/** Label column and mod text column, as fractions of the row width. */
+const MAP_STOPS = [0, 0.17]
+const MAP_PX = 18
+/**
+ * Mod rows that fit under the header on the 800 px output. Past it, unmarked mods
+ * fold into one "N other mods" line: the marked ones are the reason for the frame.
+ */
+const MAP_ROWS_MAX = 16
+
+/** Word wrap by the same width estimate as `fit`: a cut mod cannot be judged. */
+function wrapWords (line: string, max: number): string[] {
+  const out: string[] = []
+  let current = ''
+  for (const word of line.split(' ')) {
+    if (current && `${current} ${word}`.length > max) {
+      out.push(current)
+      current = word
+    } else {
+      current = current ? `${current} ${word}` : word
+    }
+  }
+  if (current) out.push(current)
+  return out
+}
+
+function modRows (mod: MapMod, max: number): Row[] {
+  const style = mod.mark ? MARK_STYLE[mod.mark] : undefined
+  const color = style?.color ?? MUTED
+  return mod.lines
+    .flatMap(line => wrapWords(line, max))
+    // An unmarked mod gets a dot: without it two unmarked mods in a row read as one.
+    .map((part, index) => columns([index === 0 ? style?.label ?? '·' : '', part], MAP_PX, color, false, MAP_STOPS))
+}
+
+/**
+ * The map check frame: the verdict first, then every explicit mod with
+ * its mark. For a map with mods it replaces the price: the 1280×800 output has
+ * room for one of them at a readable size, and for a map the question is "do I
+ * run it", not "what is it worth". The footer says so, so that the missing price
+ * reads as a choice, not as a failure, and names the button that brings the price:
+ * without the hint the flip is a gesture nobody finds.
+ */
+export function mapCheckFrame (check: MapCheck, previousMs?: number): string[] {
+  const { deadly, warning } = countMarks(check)
+  const inner = BOX.w - PAD * 2
+  const max = charBudget(MAP_PX, Math.round(inner * (1 - MAP_STOPS[1]!)) + PAD * 2)
+
+  let mods = check.mods.flatMap(mod => modRows(mod, max))
+  let folded = 0
+  if (mods.length > MAP_ROWS_MAX) {
+    const marked = check.mods.filter(mod => mod.mark)
+    folded = check.mods.length - marked.length
+    mods = marked.flatMap(mod => modRows(mod, max))
+  }
+
+  const rows: Row[] = [
+    text(check.name ?? check.base, 24, ACCENT),
+    text([check.name ? check.base : '', check.rarity ?? '', `${check.mods.length} mods`].filter(Boolean).join(' · '), 18, MUTED),
+    rule()
+  ]
+  if (previousMs != null) rows.push(text(`previous result · ${agoText(previousMs)}`, 18, WARN))
+  rows.push(
+    text(verdictText(check), 26, deadly ? ERROR : warning ? WARN : GOOD),
+    rule(),
+    ...mods
+  )
+  if (folded) rows.push(text(`${folded} other mods not shown`, 16, MUTED))
+  rows.push(
+    rule(),
+    text(FLIP_TO_PRICE, 18, NOTE),
+    text(`map check · profile: ${check.profile === 'default' ? 'default' : 'yours'}`, 16, MUTED)
+  )
   return frame(rows)
 }
 
@@ -773,6 +879,13 @@ export function errorFrame (failure: Failure, now = Date.now()): string[] {
 export const PRICE_BUTTON = 'L5'
 /** The "hide / bring back" button in the layout template (`POE_DECK_TOGGLE_KEYS`). */
 export const TOGGLE_BUTTON = 'L4'
+
+/**
+ * The bottom hints of a map: a second price-check press on the same map
+ * flips the panel between the map check and the price of the map.
+ */
+export const FLIP_TO_PRICE = `${PRICE_BUTTON} again: price`
+export const FLIP_TO_MAP = `${PRICE_BUTTON} again: map check`
 
 /**
  * First launch after install: one "all ready" frame and which

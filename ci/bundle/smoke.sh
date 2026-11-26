@@ -33,6 +33,16 @@ echo "$out" | grep -q 'no mods' || { echo "$tag ✗  the item without mods is no
   || { echo "$tag ✗  the item with mods shows no mods"; exit 1; }
 echo "$tag ✓  the embedded parser parses both item forms"
 
+# Map check: the default profile is embedded in the file, not read from disk.
+# The empty $HOME keeps a player profile of the agent out of the check.
+out=$(HOME=$(mktemp -d) "$dir/poe-deck" --check-map fixtures/conqueror-veritania-citadel-t16.txt)
+echo "$out" | sed "s/^/$tag   /"
+echo "$out" | grep -q '^map check \[default\]: .* run with care: 2 warnings$' \
+  || { echo "$tag ✗  the map check did not mark the conqueror map with the default profile"; exit 1; }
+"$dir/poe-deck" map-profile | grep -q '^deadly = ' \
+  || { echo "$tag ✗  map-profile printed no deadly rule: the default profile is not embedded"; exit 1; }
+echo "$tag ✓  the map check and its default profile are embedded"
+
 # deck-verify.sh needs the price mode on the Deck. We do not touch the network here: with no argument
 # it must answer with code 2, which means it is embedded in the file.
 rc=0

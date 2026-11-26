@@ -39,6 +39,7 @@ import { effectiveSettings, loadConfig } from '../../src/config'
 import { main } from '../../src/daemon'
 import { doctor } from '../../src/doctor'
 import { loadDonorParser, useBundledDonor } from '../../src/donor'
+import { DEFAULT_PROFILE_SOURCE, formatMapCheck, loadProfile, mapCheckOf } from '../../src/map-check'
 import { formatPriceCheck, priceOf } from '../../src/price-check'
 import { formatItem } from '../../src/slice'
 
@@ -62,6 +63,32 @@ if (argv[0] === '--version') {
 
 // Self-check for the player: link by link, ✓ or ✗ with a hint.
 if (argv[0] === 'doctor') process.exit(await doctor(POE_DECK_BUILD))
+
+// The default map check profile, for the player to copy and edit:
+//   poe-deck map-profile > ~/.config/poe-deck/map-check.profile
+if (argv[0] === 'map-profile') {
+  process.stdout.write(DEFAULT_PROFILE_SOURCE)
+  process.exit(0)
+}
+
+// Map check from a file, with the profile the daemon would use. Codes: 0 = marked,
+// 1 = not a map with mods (the daemon prices it instead), 2 = no argument.
+if (argv[0] === '--check-map') {
+  const file = argv[1]
+  if (!file) {
+    console.log('usage: poe-deck --check-map <item.txt>')
+    process.exit(2)
+  }
+  const { profile, errors } = loadProfile()
+  for (const error of errors) console.log(`✗  map check profile: ${error}`)
+  const check = mapCheckOf(readFileSync(file, 'utf8'), profile)
+  if (!check) {
+    console.log(`not a map with mods: ${file} — the daemon shows its price`)
+    process.exit(1)
+  }
+  for (const line of formatMapCheck(check)) console.log(line)
+  process.exit(0)
+}
 
 // Bundle check without a Deck and without a session: the parser from the embedded pin
 // parses item text from a file. CI uses it to check the built file in a clean container,

@@ -1,0 +1,41 @@
+# poe-deck map check profile
+#
+# When you copy a map with mods, the panel marks each mod with one of three marks:
+#
+#   deadly   do not run the map with this mod
+#   warning  you can run it, but be careful
+#   good     a mod you want
+#
+# One rule per line:   mark = pattern
+#
+# A pattern matches a part of the mod line, without regard to case. Every number
+# in the mod line counts as #, so "reflect #% of physical damage" matches
+# "Monsters reflect 18% of Physical Damage". If a mod matches rules of two marks,
+# the worse mark wins. Lines that start with # are comments.
+#
+# To change the marks, save this file as ~/.config/poe-deck/map-check.profile
+# (the command `poe-deck map-profile` prints it), edit it in Desktop Mode, and
+# restart the daemon:   systemctl --user restart poe-deck
+# Your file replaces this one completely.
+
+deadly = reflect #% of physical damage
+deadly = reflect #% of elemental damage
+deadly = cannot regenerate
+deadly = cannot leech
+deadly = cannot be leeched
+
+warning = less recovery rate
+warning = maximum resistances
+warning = players are cursed with
+warning = more monster life
+warning = thorns
+warning = critical strike
+warning = additional projectiles
+warning = chance to block
+warning = less armour
+warning = non-curse auras
+
+good = more magic monsters
+good = more rare monsters
+good = additional pack
+good = rogue exile

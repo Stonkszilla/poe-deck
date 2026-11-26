@@ -30,7 +30,9 @@ poe-deck does:
   with the range and the number of listings next to it, so one cheap bait listing
   does not decide the price;
 - let you **edit the search** on the panel with the right trackpad: switch mods on
-  and off, change min and max, change the market (instant buyout, in person, any).
+  and off, change min and max, change the market (instant buyout, in person, any);
+- **check a map before you run it** — for a map with mods the panel marks each mod
+  as deadly, warning or good, from a profile you can edit; L5 again shows its price.
 
 poe-deck does not:
 
@@ -148,6 +150,58 @@ list of the item's mods. While the cursor is on the panel, it does not go away.
 - Click **confirm** to search again with your changes, **cancel** to drop them.
 
 Move the cursor away from the panel and it closes the list after a moment.
+
+## Map check
+
+Select a map with mods (magic, rare or unique) and press **L5**, as for a price
+check. Instead of the price, the panel shows the map check:
+
+- the first line is the answer — `do not run: 1 deadly`, `run with care: 2 warnings`
+  or `nothing dangerous`;
+- below it every mod of the map, with a mark in front: **DEADLY** (red),
+  **WARN** (orange), **GOOD** (green), or `·` for a mod the profile does not mention.
+
+The screen has room for one of the two, and for a map the first question is
+whether to run it. The price is one more press away: the bottom line of the
+panel says what the next **L5** does.
+
+- **L5 again** on the same map, while the panel is on the screen, shows its price.
+  This is the only press that asks the trade site.
+- **L5 once more** goes back to the map check, and further presses switch between
+  the two without asking again. The price shows how old it is.
+
+A map without mods (white or unidentified) still gets its price at once.
+**L4** hides the panel and brings it back, the same way as a price; after **L4**,
+**L5** on the same map brings back what you saw last, and the next **L5** switches
+again. The map check itself asks nothing of the trade site.
+
+### The map check profile
+
+The marks come from a profile — a text file with one rule per line:
+
+```
+deadly = reflect #% of physical damage
+warning = players are cursed with
+good = rogue exile
+```
+
+A rule matches a part of the mod text, without regard to case. Every number in the
+mod counts as `#`. If a mod matches rules of two marks, the worse mark wins.
+
+The default profile marks physical and elemental reflect, no regeneration and no
+leech as deadly. To change it, save your own copy and edit it in Desktop Mode:
+
+```sh
+~/.local/share/poe-deck/poe-deck map-profile > ~/.config/poe-deck/map-check.profile
+kate ~/.config/poe-deck/map-check.profile
+systemctl --user restart poe-deck
+```
+
+Your file `~/.config/poe-deck/map-check.profile` replaces the default completely.
+A line with a mistake is skipped, the other lines still work. To check what your
+profile does with a map without the game, copy the map text to a file and run
+`~/.local/share/poe-deck/poe-deck --check-map <file>`. To go back to the default, delete your file and
+restart the service.
 
 ## Settings: league and market
 
