@@ -308,3 +308,11 @@ export function stackPrice<T extends Rate> (price: T, stack: number | undefined)
   const value = price.amount * stack
   return { ...price, amount: Math.abs(value) >= 1 ? round(value) : Number(value.toPrecision(2)) }
 }
+
+/** A change in percent with its sign, ASCII only (Noto Sans, ADR 0003 F4): `-16.4%`, `+142%`. */
+export function changeText (change: number): string {
+  const size = Math.abs(change)
+  const shown = size < 10 ? size.toFixed(1) : String(Math.round(size))
+  if (Number(shown) === 0) return '0%'
+  return `${change > 0 ? '+' : '-'}${shown}%`
+}

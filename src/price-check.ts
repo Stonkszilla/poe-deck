@@ -6,6 +6,7 @@
 
 import { currentLeague, exchange, fetchResults, search } from './trade/client'
 import {
+  changeText,
   formatPrice,
   priceAmountText,
   priceFromExchange,
@@ -288,9 +289,10 @@ export function formatPriceCheck (item: PricedItem, check: PriceCheck): string {
   return `${line} [${scopeNote(item, check.skippedExplicits)}]`
 }
 
-/** The tail of the log line: the Faustus rate per unit and per stack, if there is one. */
+/** The tail of the log line: the Faustus rate per unit and per stack and its week, if there is one. */
 function faustusText (item: PricedItem, check: PriceCheck): string {
   if (!check.reference) return ''
   const whole = stackPrice(check.reference, item.stackSize?.value)
-  return ` | Faustus (poe.ninja): ${rateText(check.reference)}${whole ? `, stack ${item.stackSize!.value}: ${priceValueText(whole)}` : ''}`
+  const week = check.reference.history ? `, 7 days ${changeText(check.reference.history.change)}` : ''
+  return ` | Faustus (poe.ninja): ${rateText(check.reference)}${whole ? `, stack ${item.stackSize!.value}: ${priceValueText(whole)}` : ''}${week}`
 }

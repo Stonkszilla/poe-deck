@@ -31,6 +31,7 @@ import {
 } from './trade/client'
 import { draftProblem, isDirty, slotAt, slots, type Editor, type Slot } from './editor'
 import {
+  changeText,
   NARROW_SAMPLE,
   priceAmountText,
   priceSpreadText,
@@ -41,9 +42,9 @@ import {
   type Price,
   type Rate
 } from './trade/price'
-import type { ExchangeReference } from './trade/ninja'
+import type { ExchangeReference, PriceHistory } from './trade/ninja'
 import { scopeNote } from './price-check'
-import { groupLabel, rollText, type ModFilter } from './trade/filters'
+import { groupLabel, rollText, rowLabel, type ModFilter } from './trade/filters'
 import { isMapItem, MODE_LABEL, type PricedItem } from './trade/query'
 import type { PriceCheck } from './price-check'
 import { countMarks, readMap, verdictText, type MapCheck, type MapMod, type Mark } from './map-check'
@@ -81,6 +82,7 @@ const NOTE = '6FA8DCFF'
 const WARN = 'E0A030FF'
 const ERROR = 'E5786DFF'
 const RULE = '3A3F46FF'
+const RISE = '7FC97FFF'
 
 /**
  * A frame row: either text or a divider. Text has a cursor mark: a bar on
@@ -89,7 +91,7 @@ const RULE = '3A3F46FF'
  * the line eats width and shifts the text against its neighbors (`fit` trims spaces).
  */
 type Row =
-  | { kind: 'text', text: string, px: number, color: string, marked?: boolean, cells?: string[], stops?: number[] }
+  | { kind: 'text', text: string, px: number, color: string, marked?: boolean, cells?: string[], stops?: number[], bars?: Bars }
   | { kind: 'rule' }
 
 const text = (text: string, px: number, color: string, marked = false): Row =>
@@ -104,6 +106,40 @@ const text = (text: string, px: number, color: string, marked = false): Row =>
 const columns = (cells: string[], px: number, color: string, marked = false, stops?: number[]): Row =>
   ({ kind: 'text', text: cells.join(' '), px, color, marked, cells, stops })
 const rule = (): Row => ({ kind: 'rule' })
+
+/**
+ * A small bar graph to the right of a row label: one bar per day. Drawn with
+ * `rect` only, so the ADR 0003 seam stays three commands.
+ */
+interface Bars { days: Array<number | null>, color: string }
+
+/** Where the bars start, from the inner left edge: right of the label "7 days +29.9%". */
+const BARS_LEFT = 170
+const BAR_W = 22
+const BAR_GAP = 8
+/** The lowest day still gets a visible bar: a zero-height bar reads as "no data". */
+const BAR_MIN = 4
+
+/**
+ * Bars for one row, bottom-aligned in the row. A bar is the price level of the day
+ * (`100 + change`) scaled between the lowest and the highest day of the week, so a
+ * fall of 15 % and a fall of 80 % both use the whole height: the label carries the size.
+ * A day without trades is a 2 px stub in the divider color, so the week still has seven days.
+ */
+function barRects (bars: Bars, box: Box, y: number, height: number): string[] {
+  const known = bars.days.filter((day): day is number => day != null)
+  const low = Math.min(...known)
+  const high = Math.max(...known)
+  const room = height - 4
+  const bottom = y + 2 + room
+  return bars.days.map((day, index) => {
+    const x = box.x + PAD + BARS_LEFT + index * (BAR_W + BAR_GAP)
+    if (day == null) return `rect ${x} ${bottom - 2} ${BAR_W} 2 ${RULE}`
+    const share = high - low < 0.5 ? 0.5 : (day - low) / (high - low)
+    const h = Math.round(BAR_MIN + share * (room - BAR_MIN))
+    return `rect ${x} ${bottom - h} ${BAR_W} ${h} ${bars.color}`
+  })
+}
 
 /**
  * Left column edges as fractions of the row width. Without `stops` the columns
@@ -202,6 +238,8 @@ export function laidOutFrame (
       continue
     }
     if (row.marked) head.push(`rect ${box.x + 8} ${y} 4 ${lineHeight(row.px)} ${ACCENT}`)
+    // Bars go to the head too, for the same reason as the cursor mark.
+    if (row.bars) head.push(...barRects(row.bars, box, y, lineHeight(row.px)))
     // WRAP=0: no wrapping on purpose. Otherwise the backing height would stop
     // being computed here, and nobody else can compute it.
     const cells = row.cells ?? [row.text]
@@ -336,6 +374,19 @@ function faustusRow (reference: ExchangeReference, stack: number | undefined): R
   return text(`Faustus: ${whole ? `~ ${priceValueText(whole)} · ` : ''}${rateText(reference)}`, 22, VALUE)
 }
 
+/** Below this change in percent the week counts as flat and gets no color. */
+const FLAT_PCT = 5
+
+/**
+ * The week of the poe.ninja rate: label and bars on one row. No history, no row:
+ * the plain price is the answer then, and an empty graph would read as "broken".
+ */
+function historyRows (history: PriceHistory | undefined): Row[] {
+  if (!history) return []
+  const color = history.change <= -FLAT_PCT ? ERROR : history.change >= FLAT_PCT ? RISE : MUTED
+  return [{ kind: 'text', text: `7 days ${changeText(history.change)}`, px: 18, color, bars: { days: history.days, color } }]
+}
+
 /**
  * Price frame. It is also the "no price" frame: that is an answer from trade, not a failure.
  *
@@ -362,6 +413,7 @@ export function priceFrame (item: PricedItem, check: PriceCheck, previousMs?: nu
     // The main price is the Faustus rate: it is big, the trade price is one line below.
     rows.push(...amountRows(check.reference, true, stack))
     rows.push(text(`Faustus exchange (poe.ninja), ${check.league}`, 18, NOTE))
+    rows.push(...historyRows(check.reference.history))
     rows.push(check.price
       ? text(`trade: ~ ${priceValueText(stackPrice(check.price, stack) ?? check.price)} · ${priceScopeText(check.price)}`, 18, MUTED)
       : text(`trade: no listings in ${check.league}`, 18, WARN))
@@ -379,11 +431,11 @@ export function priceFrame (item: PricedItem, check: PriceCheck, previousMs?: nu
     if (check.price.total < NARROW_SAMPLE) {
       rows.push(text(`only ${check.price.total} listings — the filter is narrow`, 18, WARN))
     }
-    if (check.reference) rows.push(faustusRow(check.reference, stack))
+    if (check.reference) rows.push(faustusRow(check.reference, stack), ...historyRows(check.reference.history))
   } else {
     rows.push(text('no price', 28, WARN))
     rows.push(text(`no listings in ${check.league}`, 18, NOTE))
-    if (check.reference) rows.push(faustusRow(check.reference, stack))
+    if (check.reference) rows.push(faustusRow(check.reference, stack), ...historyRows(check.reference.history))
   }
 
   // Caveats. We must not stay silent about them: an empty filter with five mods is
@@ -596,7 +648,7 @@ function modLines (
       focusMark(value == null ? name : rollText(value), focus.field === name, focus.editing)
     const labelW = Math.round((width - PAD * 2) * modStops(px, width)[1]!) + PAD * 2
     return {
-      lines: listLines(px, width, box, row.label, '', labelW),
+      lines: listLines(px, width, box, rowLabel(row), '', labelW),
       controls: [bound(row.min, 'min'), bound(row.max, 'max'), focusMark('=', focus.field === 'exact', false)]
     }
   }
@@ -609,7 +661,7 @@ function modLines (
       : ''
   // We do not wrap the checkbox in brackets: it is made of brackets itself, and the selected line
   // is already marked with the bar and the color.
-  return { lines: listLines(px, width, box, row.label, tail) }
+  return { lines: listLines(px, width, box, rowLabel(row), tail) }
 }
 
 /**

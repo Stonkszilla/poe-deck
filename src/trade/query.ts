@@ -28,7 +28,7 @@
 // map of categories to trade ids. They refine the query, they do not make it possible.
 // Defence properties and weapon dps are ported — as rows of the `properties` group.
 
-import { defaultFilters, toStatFilters } from './filters'
+import { BASE_TYPE_ID, baseCategory, defaultFilters, toStatFilters } from './filters'
 
 /** Is this a map. Donor category — `ItemCategory.Map` = `'Map'` (`parser/meta.ts:2`). */
 export function isMapItem (item: Pick<PricedItem, 'category' | 'mapTier'>): boolean {
@@ -39,7 +39,11 @@ export function isMapItem (item: Pick<PricedItem, 'category' | 'mapTier'>): bool
 export interface PricedItem {
   rarity?: string
   itemLevel?: number
-  isCorrupted?: boolean
+  /**
+   * The donor parser (3.30 pin) gives an object, `{}` or `{ twice: true }`, and leaves the
+   * field out for an item that is not corrupted. The boolean is the older form.
+   */
+  isCorrupted?: boolean | { twice?: boolean }
   isUnidentified?: boolean
   info: {
     name?: string
@@ -71,12 +75,29 @@ export interface PricedItem {
   statsByType: Array<{
     stat: {
       ref: string
-      trade: { ids: Record<string, string[] | undefined>, option?: true }
+      /**
+       * Which direction of the roll is better: 1 — higher, -1 — lower, 0 — neither
+       * (donor `StatBetter`). Decides which bound a filter gets.
+       */
+      better?: number
+      /**
+       * How the game writes the mod. A `negate` matcher reads a negative roll:
+       * "20% reduced Flask Charges used" is the roll −20 of the ref "#% increased …".
+       */
+      matchers?: Array<{ string: string, negate?: true, value?: number }>
+      /**
+       * `inverted`: trade keeps the value with the opposite sign to the parser roll. The
+       * parser reads "20% reduced Flask Charges used" as −20, trade keeps it as 20.
+       * Donor `trade.inverted`.
+       */
+      trade: { ids: Record<string, string[] | undefined>, option?: true, inverted?: true }
     }
     /** Donor ModifierType: explicit | implicit | enchant | fractured | crafted | … */
     type: string
     sources: Array<{
       modifier: { info: { tier?: number } }
+      /** The matcher the parser used on the item line: "#% reduced Flask Charges used". */
+      stat?: { translation: { string: string } }
       contributes?: { value: number, min: number, max: number }
     }>
   }>
@@ -161,7 +182,7 @@ export interface SearchBody {
     type?: string | { option: string, discriminator: string }
     stats: StatGroup[]
     filters: {
-      type_filters?: { filters: { rarity?: { option: string } } }
+      type_filters?: { filters: { rarity?: { option: string }, category?: { option: string } } }
       map_filters?: {
         filters: {
           map_tier?: { min: number, max: number }
@@ -228,7 +249,9 @@ export function skippedExplicits (item: PricedItem): number {
  * for the price of the base, not an exchange rate.
  */
 export function pickFork (item: PricedItem, stats?: StatEntryFilter[]): 'search' | 'exchange' {
-  if ((stats ?? []).length || statFilters(item).length) return 'search'
+  // The base row is not a mod: an equipment item that has it is searched anyway.
+  const mods = (set: StatEntryFilter[]) => set.some(stat => stat.id !== BASE_TYPE_ID)
+  if (mods(stats ?? []) || mods(statFilters(item))) return 'search'
   return item.info.tradeTag ? 'exchange' : 'search'
 }
 
@@ -260,7 +283,7 @@ export function buildSearchQuery (
   const body: SearchBody = {
     query: {
       status: { option: opts.status ?? DEFAULT_SEARCH_MODE },
-      stats: statGroups(chosen.filter(stat => !PROPERTY_FIELD[stat.id])),
+      stats: statGroups(chosen.filter(stat => !isPropertyFilter(stat.id))),
       filters: {}
     },
     sort: { price: 'asc' }
@@ -315,13 +338,22 @@ export function buildSearchQuery (
   // `type: 'Shaper Guardian Map'` — 6569 listings, all Shaper Guardian Map, from 3 chaos
   // against 2 chaos for an ordinary T16. Donor rule: the discriminator is set only when
   // the base is `Map` (`create-item-filters.ts:175`).
+  //
+  // The player can switch the base off in the editor (the `item.base_type` row). Then the
+  // query names the trade category instead, as the donor does with its base checkbox
+  // (`pathofexile-trade.ts:329-333`): the same mods on any ring, not on any item.
+  const category = baseCategory(item)
+  const anyBase = category != null && opts.stats != null && !opts.stats.some(stat => stat.id === BASE_TYPE_ID)
   const blight = isMap ? mapBlight(item) : undefined
   if (isMap && (blight || !base || base === 'Map')) body.query.type = { option: 'Map', discriminator: 'map' }
-  else if (base) body.query.type = base
+  else if (base && !anyBase) body.query.type = base
   if (isUnique && item.info.name) body.query.name = item.info.name
 
   body.query.filters.type_filters = {
-    filters: { rarity: { option: isUnique ? 'unique' : 'nonunique' } }
+    filters: {
+      rarity: { option: isUnique ? 'unique' : 'nonunique' },
+      ...(anyBase ? { category: { option: category } } : {})
+    }
   }
 
   // Tier is the main thing that makes one map different from another: T16 and T3 with
@@ -358,7 +390,9 @@ export function buildSearchQuery (
   // Corruption and identification change the price many times over, and for the item
   // in hand they are known exactly — so this is not a guess, but part of what we hold.
   const misc: NonNullable<SearchBody['query']['filters']['misc_filters']>['filters'] = {}
-  if (item.isCorrupted !== undefined) misc.corrupted = { option: String(item.isCorrupted) }
+  // `String(item.isCorrupted)` sent `"[object Object]"` for the object form of the parser. Trade read
+  // it as true by accident: on a live search it gave the same count as `"true"`.
+  if (item.isCorrupted !== undefined) misc.corrupted = { option: String(Boolean(item.isCorrupted)) }
   if (item.isUnidentified) misc.identified = { option: 'false' }
   // Item level comes from the editor as a `properties` row, and lives in the same
   // query group as corruption and identification.
@@ -402,7 +436,7 @@ export function mapBlight (item: PricedItem): 'blighted' | 'ravaged' | undefined
  * is searched by base is not a mod and does not turn the base price into the item price.
  */
 export function isPropertyFilter (id: string): boolean {
-  return PROPERTY_FIELD[id] != null
+  return PROPERTY_FIELD[id] != null || id === BASE_TYPE_ID
 }
 
 type PropertyGroup = 'armour_filters' | 'weapon_filters' | 'misc_filters'

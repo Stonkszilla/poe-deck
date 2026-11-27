@@ -26,6 +26,7 @@
 
 import {
   copyFilters,
+  defaultBound,
   defaultFilters,
   filterProblem,
   filterSignature,
@@ -228,8 +229,9 @@ export function reduce (
         const row = draft[slot.row]!
         const roll = row.roll ?? 0
         if (row.enabled && isExact(row)) {
-          row.min = minRoll(roll)
+          delete row.min
           delete row.max
+          Object.assign(row, defaultBound(row))
         } else {
           row.enabled = true
           row.min = roll
@@ -245,7 +247,7 @@ export function reduce (
         // An enabled range needs a reference point, otherwise the filter just means
         // "this mod is present". The default is the same as in the automatic set.
         if (row.enabled && row.kind === 'range' && row.min == null && row.max == null) {
-          row.min = minRoll(row.roll ?? 0)
+          Object.assign(row, defaultBound(row))
         }
         return none({ ...editor, draft })
       }

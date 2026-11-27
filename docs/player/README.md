@@ -133,6 +133,16 @@ How a price check goes:
 3. The panel goes away on its own after 15 seconds. **L4** hides it sooner.
    Press **L4** again to bring back the same result — this sends nothing to trade.
 
+For currency and other items of the in-game Currency Exchange (fragments, essences,
+fossils, oils, omens), the panel also shows how the poe.ninja rate moved over the
+last 7 days: one small bar per day and the change in percent, for example
+`7 days -16%`. It is red when the rate fell by 5 % or more and green when it rose
+by 5 % or more, so a crashing price shows before you sell. There is no graph when
+poe.ninja knows fewer than three days of trades for the item, or the item trades
+for less than 50 chaos a day: such a week is noise. Prices from trade listings —
+rares, uniques, maps — have no week graph: poe.ninja keeps no history for one
+specific item.
+
 The first time you enter the game after installing, the panel says
 `poe-deck ready — select an item and press L5` once.
 

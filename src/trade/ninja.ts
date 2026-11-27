@@ -47,7 +47,12 @@ const NINJA_TTL_MS = 30 * 60_000
 
 export interface ExchangeOverview {
   core?: { primary?: string, secondary?: string, rates?: Record<string, number> }
-  lines?: Array<{ id: string, primaryValue?: number, volumePrimaryValue?: number }>
+  lines?: Array<{
+    id: string
+    primaryValue?: number
+    volumePrimaryValue?: number
+    sparkline?: { totalChange?: number | null, data?: Array<number | null> | null } | null
+  }>
   items?: Array<{ id: string, name?: string | null }>
 }
 
@@ -55,6 +60,49 @@ export interface ExchangeOverview {
 export interface ExchangeReference extends Rate {
   /** Volume in the summary, in its main currency: zero means nobody filled the rate. */
   volume: number
+  /** How the rate moved over the last week. Absent when the history says nothing. */
+  history?: PriceHistory
+}
+
+/**
+ * The last week of the rate, from the same summary row: poe.ninja sends it as
+ * `sparkline` next to the rate, so the graph costs no extra request.
+ *
+ * `days` are seven daily points, oldest first. Each is the change in percent
+ * against the start of the window, in the same currency as the rate (for chaos it is
+ * chaos in divine). `null` is a day without trades: a new item has them at the start.
+ */
+export interface PriceHistory {
+  days: Array<number | null>
+  /** Change over the whole window, in percent. */
+  change: number
+}
+
+/**
+ * Fewer known days than this is not a trend: two points are a line, and the graph
+ * would draw a crash out of one trade.
+ */
+export const MIN_HISTORY_DAYS = 3
+
+/**
+ * Below this daily volume (in chaos) the history is noise. Measured 25.11 in Covens:
+ * essences that trade for under 5 chaos a day jump by +300 % and -80 % from day
+ * to day, while every currency row above 400 chaos a day moves smoothly. The bar sits
+ * well above the noise and well below the smallest liquid currency.
+ */
+export const MIN_HISTORY_VOLUME = 50
+
+/** The week graph for a summary row, or `undefined` when it would mislead. */
+export function historyFrom (
+  sparkline: { totalChange?: number | null, data?: Array<number | null> | null } | null | undefined,
+  volume: number
+): PriceHistory | undefined {
+  if (!(volume >= MIN_HISTORY_VOLUME)) return undefined
+  const days = (sparkline?.data ?? []).map(day => Number.isFinite(day) ? day : null)
+  const known = days.filter((day): day is number => day != null)
+  if (known.length < MIN_HISTORY_DAYS) return undefined
+  const total = sparkline?.totalChange
+  return { days, change: Number.isFinite(total) ? total! : known.at(-1)! }
 }
 
 /**
@@ -75,11 +123,14 @@ export function referenceFrom (overview: ExchangeOverview, item: PricedItem): Ex
   const primary = overview.core?.primary ?? 'chaos'
   const secondary = overview.core?.secondary
   const volume = line.volumePrimaryValue ?? 0
+  // The chaos row's sparkline is already chaos in divine, the same as the rate below.
+  const history = historyFrom(line.sparkline, volume)
+  const extra = history ? { history } : {}
   if (line.id === primary && secondary) {
     const rate = overview.core?.rates?.[secondary]
-    return rate! > 0 ? { amount: rate!, currency: secondary, volume } : undefined
+    return rate! > 0 ? { amount: rate!, currency: secondary, volume, ...extra } : undefined
   }
-  return { amount: line.primaryValue!, currency: primary, volume }
+  return { amount: line.primaryValue!, currency: primary, volume, ...extra }
 }
 
 const cache = new Map<string, { at: number, overview: ExchangeOverview }>()

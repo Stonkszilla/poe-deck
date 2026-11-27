@@ -114,6 +114,7 @@ import {
 } from './slice'
 import type { EditorSearch } from './editor'
 import { currentLeague, UnknownLeagueError } from './trade/client'
+import { BASE_TYPE_ID } from './trade/filters'
 import {
   DEFAULT_SEARCH_MODE,
   MODE_LABEL,
@@ -863,7 +864,8 @@ export async function main (): Promise<number> {
     for (const out of formatItem(item)) log(out)
     parsed++
     await dumpBuffer(text, parsed)
-    const sent = statFilters(item)
+    // The base row is not a mod: "with mods (1 in filter)" on a white ring would lie.
+    const sent = statFilters(item).filter(stat => stat.id !== BASE_TYPE_ID)
     const withMods = sent.length
     log(`✓  item parsed${hasAdvancedBlock(text) ? '' : ' (no mod block — normal for currency and maps)'}`)
     log(`   shape: ${withMods ? `with mods (${withMods} in filter)` : 'no mods'}`)
@@ -896,7 +898,7 @@ export async function main (): Promise<number> {
    * tied to that map check, so that the next L5 flips back to it.
    */
   const showPrice = async (item: PricedItem, text: string, t0: number, tClip: number, ofMap: boolean): Promise<void> => {
-    const withMods = statFilters(item).length
+    const withMods = statFilters(item).filter(stat => stat.id !== BASE_TYPE_ID).length
     const map = ofMap && overlay.last && isMapResult(overlay.last) ? overlay.last : undefined
     // The waiting frame goes out AT ONCE: the network comes next, and without it the panel is silent
     // for exactly the time in which the user decides the thing is broken.

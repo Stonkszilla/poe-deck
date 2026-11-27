@@ -14,7 +14,7 @@
 // The default rules come from the donor as an idea, no code is borrowed:
 // SnosMe/awakened-poe-trade (MIT), `create-stat-filters.ts:98-103`, `percentRoll`.
 
-import { isMapItem, type PricedItem, type StatEntryFilter } from './query'
+import { isMapItem, visceraBase, type PricedItem, type StatEntryFilter } from './query'
 
 /** How many percent of the roll to subtract for the filter min. Donor default. */
 export const SEARCH_RANGE_PERCENT = 10
@@ -41,8 +41,16 @@ export interface ModFilter {
   type: string
   tier?: number
   kind: ModKind
-  /** Actual roll on the item. A flag has none. */
+  /**
+   * Actual roll on the item, as the item text shows it. A flag has none. The roll
+   * and both bounds stay in this space: "20% reduced Flask Charges used" is 20 here,
+   * the same number the player reads. `tradeSign` turns them into trade values.
+   */
   roll?: number
+  /** A lower roll is the better one: the filter is bounded from above. */
+  lowerIsBetter?: true
+  /** Trade keeps the value with the opposite sign to the roll: bounds are negated and swapped. */
+  tradeSign?: -1
   /** Mod variant for `kind: 'option'`: on trade this is a choice, not an interval. */
   option?: number
   enabled: boolean
@@ -203,6 +211,78 @@ function ceilToBracket (value: number, brackets: number[]): number {
   return brackets.filter(step => step >= value).at(-1) ?? brackets[0]!
 }
 
+/** The editor row of the item base. On: the query names the base; off: only its category. */
+export const BASE_TYPE_ID = 'item.base_type'
+
+/**
+ * Donor category → trade category, for the query with the base switched off. The table is the
+ * donor's `CATEGORY_TO_TRADE_ID` (`pathofexile-trade.ts:13-62`) without maps, which are
+ * searched by tier, and without categories that have no rare form.
+ */
+const TRADE_CATEGORY: Record<string, string | undefined> = {
+  'Abyss Jewel': 'jewel.abyss',
+  Amulet: 'accessory.amulet',
+  Belt: 'accessory.belt',
+  'Body Armour': 'armour.chest',
+  Boots: 'armour.boots',
+  Bow: 'weapon.bow',
+  Claw: 'weapon.claw',
+  Dagger: 'weapon.dagger',
+  'Fishing Rod': 'weapon.rod',
+  Flask: 'flask',
+  Gloves: 'armour.gloves',
+  Helmet: 'armour.helmet',
+  Jewel: 'jewel',
+  'One-Handed Axe': 'weapon.oneaxe',
+  'One-Handed Mace': 'weapon.onemace',
+  'One-Handed Sword': 'weapon.onesword',
+  Quiver: 'armour.quiver',
+  Ring: 'accessory.ring',
+  'Rune Dagger': 'weapon.runedagger',
+  Sceptre: 'weapon.sceptre',
+  Shield: 'armour.shield',
+  Staff: 'weapon.staff',
+  'Two-Handed Axe': 'weapon.twoaxe',
+  'Two-Handed Mace': 'weapon.twomace',
+  'Two-Handed Sword': 'weapon.twosword',
+  Wand: 'weapon.wand',
+  Warstaff: 'weapon.warstaff',
+  'Cluster Jewel': 'jewel.cluster',
+  Trinket: 'accessory.trinket',
+  Tincture: 'tincture',
+  'Head Viscera': 'viscera.head',
+  'Torso Viscera': 'viscera.body',
+  'Lower Limb Viscera': 'viscera.leg',
+  'Upper Limb Viscera': 'viscera.arm'
+}
+
+/**
+ * The trade category of an item whose base the player may switch off. Absent for uniques
+ * (the name already sets the base), maps (searched by tier) and everything that is not
+ * equipment: there the base is the item itself, and "any base" means any item.
+ */
+export function baseCategory (item: PricedItem): string | undefined {
+  if (!['Normal', 'Magic', 'Rare'].includes(item.rarity ?? '') || isMapItem(item)) return undefined
+  return item.category ? TRADE_CATEGORY[item.category] : undefined
+}
+
+/**
+ * The base as a row (tester: "make searching by base type toggleable"). On by default, so
+ * the automatic query does not change. Off, the query searches the same mods on every base
+ * of the category: a ring with life and resistances is priced among all rings, not only
+ * among Synaptic Rings.
+ */
+function baseTypeFilter (item: PricedItem): ModFilter | undefined {
+  if (!baseCategory(item)) return undefined
+  return {
+    id: BASE_TYPE_ID,
+    label: `Base: ${visceraBase(item) ?? item.info.refName}`,
+    type: 'property',
+    kind: 'flag',
+    enabled: true
+  }
+}
+
 /**
  * Item property rows: defence for armour and shields, dps for weapons. For everything else
  * the list is empty. All are off: a property that is on changes the meaning of the query, and that is
@@ -273,6 +353,33 @@ export function minRoll (value: number): number {
     : Math.floor((lowered + Number.EPSILON) * 100) / 100
 }
 
+/** Roll plus 10%, rounded up: the bound of a mod where a lower roll is better. */
+export function maxRoll (value: number): number {
+  const raised = value + Math.abs(value) * SEARCH_RANGE_PERCENT / 100
+  return Number.isInteger(value)
+    ? Math.ceil(raised)
+    : Math.ceil((raised - Number.EPSILON) * 100) / 100
+}
+
+/**
+ * The default bound of an enabled range: from below for a mod where more is better,
+ * from above where less is better (donor `filterFillMinMax`). "At least 9% increased Mana
+ * Cost" searched every worse roll and missed every better one.
+ */
+export function defaultBound (row: Pick<ModFilter, 'roll' | 'lowerIsBetter'>): { min?: number, max?: number } {
+  const roll = row.roll ?? 0
+  return row.lowerIsBetter ? { max: maxRoll(roll) } : { min: minRoll(roll) }
+}
+
+/**
+ * The row label with the mod tier, as the advanced item description gives it:
+ * "+44 to maximum Life (T5)". Without the tier the player cannot tell a T1 roll from a T5 one,
+ * and the tier is what the default filter keys on.
+ */
+export function rowLabel (row: Pick<ModFilter, 'label' | 'tier'>): string {
+  return row.tier != null ? `${row.label} (T${row.tier})` : row.label
+}
+
 /** A number for a human: an integer stays an integer, a fraction is cut to hundredths. */
 export function rollText (value: number): string {
   return String(Number(value.toFixed(2)))
@@ -286,7 +393,9 @@ export function rollText (value: number): string {
 export function modLabel (ref: string, roll?: number): string {
   if (roll === undefined) return ref
   const places = ref.split('#').length - 1
-  return places === 1 ? ref.replace('#', rollText(roll)) : `${ref} — ${rollText(roll)}`
+  // "+# to Dexterity" with −44 is "-44 to Dexterity" on the item, not "+-44".
+  if (places === 1) return ref.replace(roll < 0 ? /\+?#/ : '#', rollText(roll))
+  return `${ref} — ${rollText(roll)}`
 }
 
 /**
@@ -369,6 +478,42 @@ function tradeIds (
   return { id: rest[0], alt: rest.slice(1) }
 }
 
+/**
+ * The three signs of a range mod, from the donor stat (`create-stat-filters.ts:306-345`,
+ * `pathofexile-trade.ts:860-870`), the code is our own:
+ *
+ *   - `display` — the parser keeps "20% reduced Flask Charges used" as −20 of the ref
+ *     "#% increased …": the line matched a `negate` matcher. The row shows it as 20 with
+ *     the text that matched, so the number, the text and the bounds are the ones the player reads;
+ *   - `lowerIsBetter` — `better: -1` in the parser space, flipped by `display`;
+ *   - `trade` — the sign of trade relative to the row. `trade.inverted` means trade keeps
+ *     the parser value negated; together with `display` the two can cancel out.
+ *
+ * The text is the matcher the parser used on the item line (`translation.string`), not a
+ * guess from the sign of the roll: "36% increased Effect of Curses on you" is the roll +36
+ * of the ref "#% reduced …", and the ref alone would put "reduced" on the row.
+ *
+ * Before this, every range got `min = roll − 10%` in the parser space. For an inverted
+ * mod with a positive roll trade keeps a negative number, so the filter `min` matched
+ * nothing; for a negated one it matched every roll, the bad ones too.
+ */
+function rollSign (
+  calc: PricedItem['statsByType'][number]
+): { display: 1 | -1, lowerIsBetter: boolean, trade: 1 | -1, text?: string } {
+  const { stat } = calc
+  const matched = calc.sources.find(source => source.stat?.translation.string)?.stat!.translation.string
+  const negate = matched != null && !!stat.matchers?.find(m => m.string === matched)?.negate
+  const display = negate ? -1 : 1
+  const inverted = stat.trade.inverted ? -1 : 1
+  return {
+    display,
+    lowerIsBetter: (stat.better === -1) !== (display === -1),
+    trade: (inverted * display) as 1 | -1,
+    // The matchers drop the "+" of the ref: "# to maximum Life" is the same text as "+# to maximum Life".
+    ...(matched && matched !== stat.ref.replaceAll('+#', '#') ? { text: matched } : {})
+  }
+}
+
 /** The minimum (best) tier among the mod sources. */
 function bestTier (sources: PricedItem['statsByType'][number]['sources']): number | undefined {
   const tiers = sources.map(s => s.modifier.info.tier).filter((t): t is number => t != null)
@@ -387,18 +532,22 @@ export function defaultFilters (item: PricedItem): ModFilter[] {
 
   const mods = item.statsByType.map(calc => {
     const { id, alt } = tradeIds(calc.stat.trade, calc.type)
-    const roll = rollValue(calc.sources)
+    const parsed = rollValue(calc.sources)
     const tier = bestTier(calc.sources)
-    const kind: ModKind = calc.stat.trade.option ? 'option' : roll === undefined ? 'flag' : 'range'
+    const kind: ModKind = calc.stat.trade.option ? 'option' : parsed === undefined ? 'flag' : 'range'
+    const sign = kind === 'range' ? rollSign(calc) : undefined
+    const roll = sign ? parsed! * sign.display : parsed
 
     const row: ModFilter = {
-      label: modLabel(calc.stat.ref, kind === 'option' ? undefined : roll),
+      label: modLabel(sign?.text ?? calc.stat.ref, kind === 'option' ? undefined : roll),
       type: calc.type,
       tier,
       kind,
       roll,
       enabled: false
     }
+    if (sign?.lowerIsBetter) row.lowerIsBetter = true
+    if (sign?.trade === -1) row.tradeSign = -1
 
     if (!id) {
       row.unavailable = 'no such filter on trade'
@@ -417,7 +566,7 @@ export function defaultFilters (item: PricedItem): ModFilter[] {
     row.id = id
     if (alt.length) row.altIds = alt
     row.enabled = defaultEnabled(calc.type, kind, tier, unique, map)
-    if (kind === 'range' && row.enabled) row.min = minRoll(roll!)
+    if (kind === 'range' && row.enabled) Object.assign(row, defaultBound(row))
     return row
   })
 
@@ -430,7 +579,9 @@ export function defaultFilters (item: PricedItem): ModFilter[] {
     ilvl.enabled = true
   }
 
-  return [...(ilvl ? [ilvl] : []), ...propertyFilters(item), ...mods]
+  const base = baseTypeFilter(item)
+
+  return [...(base ? [base] : []), ...(ilvl ? [ilvl] : []), ...propertyFilters(item), ...mods]
     .map((row, at) => ({ row, at }))
     .sort((a, b) => groupRank(a.row.type) - groupRank(b.row.type) || a.at - b.at)
     .map(entry => entry.row)
@@ -471,13 +622,22 @@ export function toStatFilters (rows: ModFilter[]): StatEntryFilter[] {
       continue
     }
 
+    // The row lives in the item text space; trade may keep the value negated, then
+    // "at least 18% reduced" is "at most −18" there.
+    const [min, max] = row.tradeSign === -1
+      ? [negate(row.max), negate(row.min)]
+      : [row.min, row.max]
     const value: NonNullable<StatEntryFilter['value']> = {}
-    if (row.min != null) value.min = row.min
-    if (row.max != null) value.max = row.max
+    if (min != null) value.min = min
+    if (max != null) value.max = max
     out.push({ id: row.id, value, ...alt })
   }
 
   return out
+}
+
+function negate (value: number | undefined): number | undefined {
+  return value == null ? undefined : -value
 }
 
 /** A snapshot of the set for comparison: the price belongs to what went into the query. */
